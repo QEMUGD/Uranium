@@ -216,28 +216,10 @@ public:
 
 class $modify(UraniumPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
-        uranium::replaying = false;
-        auto current = uranium::levelName(this);
-        // Show the choice screen on entry, before the player begins actively playing.
-        // The level scene is initialized underneath the modal popup.
-        if (current != "unknown") {
-            uranium::awaitingChoice = true;
-            if (auto popup = uranium::LevelChoicePopup::create(this)) {
-                this->pauseSchedulerAndActions();
-                popup->show();
-            } else {
-                uranium::awaitingChoice = false;
-                this->resumeSchedulerAndActions();
-            }
-        }
-        return true;
-    }
-
-    void update(float dt) {
-        // Freeze PlayLayer simulation while the entry-choice popup is open.
-        // The popup remains interactive because it is managed by the scene/UI.
-        if (uranium::awaitingChoice) return;
-        PlayLayer::update(dt);
+        // Do not initialize the actual gameplay scene until the user chooses.
+        // PlayLayer::init starts the level, so pausing it afterward is too late.
+        // This hook is intentionally removed from init; the proper interception
+        // must happen in the level-launch flow before PlayLayer is constructed.
+        return PlayLayer::init(level, useReplay, dontCreateObjects);
     }
 };
