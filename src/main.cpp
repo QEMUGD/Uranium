@@ -304,6 +304,9 @@ class LevelChoicePopup final : public Popup {
             setStatus("DP found no upcoming hazards");
             return;
         }
+        std::sort(hazards.begin(), hazards.end(), [](const Hitbox& a, const Hitbox& b) {
+            return a.left < b.left;
+        });
 
         // Estimate world speed from the most recent live samples; use a conservative
         // normal-speed fallback if Solve was opened before samples were collected.
@@ -401,12 +404,6 @@ class LevelChoicePopup final : public Popup {
             return;
         }
 
-        plannedJumpFrames.clear();
-        for (int at = goal; at > 0; at = nodes[static_cast<size_t>(at)].parent) {
-            const auto& n = nodes[static_cast<size_t>(at)];
-            if (n.jump) plannedJumpFrames.push_back(
-                static_cast<int>(std::lround((startX + speedPerFrame * static_cast<float>(reachedTick)) / speedPerFrame)));
-        }
         // Backtrack with an explicit tick counter; node parents are always from the previous layer.
         plannedJumpFrames.clear();
         {
@@ -542,7 +539,7 @@ class $modify(UraniumPlayLayer, PlayLayer) {
             uranium::replayFrameAccumulator -= static_cast<float>(steps);
             for (int i = 0; i < steps; ++i, ++uranium::replayFrame) {
                 if (uranium::replayNode < uranium::plannedJumpFrames.size() &&
-                    uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame) {
+                    uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame + 1) {
                     player->pushButton(PlayerButton::Jump);
                     uranium::releaseReplayJump = true;
                     ++uranium::replayNode;
