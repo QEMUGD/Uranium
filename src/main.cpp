@@ -17,6 +17,7 @@ static bool solved = false;
 static std::string solvedLevel;
 static std::vector<Cell> solution;
 static bool replaying = false;
+static bool awaitingChoice = false;
 static size_t replayNode = 0;
 static float replayClock = 0.f;
 static constexpr float CELL_SIZE = 12.f;
@@ -143,6 +144,7 @@ class LevelChoicePopup final : public Popup {
     void setStatus(char const* text) { if (m_status) m_status->setString(text); }
     void onNormal(CCObject*) {
         replaying = false;
+        awaitingChoice = false;
         this->onClose(nullptr);
     }
     void onSolve(CCObject*) {
@@ -219,8 +221,20 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         // Show the choice screen on entry, before the player begins actively playing.
         // The level scene is initialized underneath the modal popup.
         if (current != "unknown") {
-            if (auto popup = uranium::LevelChoicePopup::create(this)) popup->show();
+            uranium::awaitingChoice = true;
+            if (auto popup = uranium::LevelChoicePopup::create(this)) {
+                popup->show();
+            } else {
+                uranium::awaitingChoice = false;
+            }
         }
         return true;
+    }
+
+    void update(float dt) {
+        // Freeze PlayLayer simulation while the entry-choice popup is open.
+        // The popup remains interactive because it is managed by the scene/UI.
+        if (uranium::awaitingChoice) return;
+        PlayLayer::update(dt);
     }
 };
