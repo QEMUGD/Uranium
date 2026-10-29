@@ -1,0 +1,12 @@
+{
+  "geode": "4.0.0",
+  "gd": {
+    "win": "2.2074"
+  },
+  "id": "uranium.cleanroom",
+  "name": "Uranium",
+  "version": "v0.1.0",
+  "developer": "QEMUGD",
+  "description": "Clean-room macro tools and experimental Geometry Dash pathfinding research.",
+  "dependencies": {}
+}

@@ -1,0 +1,16 @@
+name: Build Uranium
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, uranium-clean-rebuild]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Geode mod
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          combine: true
