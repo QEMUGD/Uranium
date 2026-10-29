@@ -341,11 +341,10 @@ class $modify(UraniumPlayLayer, PlayLayer) {
                         nearest = object;
                     }
                 }
-                float speed = std::abs(static_cast<float>(player->m_xVelocity));
-                if (speed < 1.f) speed = 1.f;
-                // Start the jump about 0.20 seconds before the hazard arrives.
-                // A spike's collision box is narrower than its visible sprite.
-                const float triggerDistance = std::clamp(speed * .20f, 22.f, 105.f);
+                // Conservative trigger distance for a normal-speed cube.
+                // Avoid relying on a velocity field that differs across SDK builds.
+                // This remains an approximation; speed portals need a proper physics model.
+                constexpr float triggerDistance = 60.f;
                 if (nearest && nearest != uranium::lastReplayHazard &&
                     nearestDistance <= triggerDistance) {
                     player->pushButton(PlayerButton::Jump);
