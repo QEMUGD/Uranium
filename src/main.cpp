@@ -23,6 +23,9 @@ static size_t replayNode = 0;
 static float replayClock = 0.f;
 static bool autoClick17 = false;
 static float autoClickClock = 0.f;
+static GameObject* lastReplayHazard = nullptr;
+static bool releaseReplayJump = false;
+static float replayCooldown = 0.f;
 static int targetTPS = 240;
 static bool tpsBypassEnabled = false;
 static constexpr float CELL_SIZE = 12.f;
@@ -172,39 +175,62 @@ class LevelChoicePopup final : public Popup {
     }
     void onNormal(CCObject*) {
         replaying = false;
+        lastReplayHazard = nullptr;
+        releaseReplayJump = false;
         awaitingChoice = false;
         this->onClose(nullptr);
     }
     void onSolve(CCObject*) {
-        if (!m_layer) { setStatus("No active level"); return; }
-        setStatus("Mapping hitboxes and searching...");
-        size_t hitboxCount = 0;
-        auto route = findRoute(m_layer, hitboxCount);
-        if (route.empty()) {
-            solved = false;
-            solution.clear();
-            setStatus("No geometric route found");
-            Notification::create("Pathfinder could not find a route in this collision map", NotificationIcon::Warning)->show();
+        if (!m_layer || !m_layer->m_player1 || !m_layer->m_objects) {
+            setStatus("No active level objects");
             return;
         }
-        solution = std::move(route);
+        // This first executable controller is deliberately limited to normal
+        // cube mode: it reacts to actual hazard objects instead of pretending
+        // a free-space A* path is a sequence of valid game inputs.
+        if (!m_layer->m_player1->isInNormalMode()) {
+            solved = false;
+            solution.clear();
+            setStatus("Auto replay currently supports cube mode only");
+            return;
+        }
+        size_t hazards = 0;
+        for (unsigned int i = 0; i < m_layer->m_objects->count(); ++i) {
+            auto* object = static_cast<GameObject*>(m_layer->m_objects->objectAtIndex(i));
+            if (object && object->m_objectType == GameObjectType::Hazard) ++hazards;
+        }
+        if (!hazards) {
+            solved = false;
+            solution.clear();
+            setStatus("No hazard objects found in this level");
+            return;
+        }
         solved = true;
         solvedLevel = levelName(m_layer);
+        solution.assign(1, Cell{0, 0}); // marks this level as prepared for reactive replay
         if (m_replay) m_replay->setEnabled(true);
         char message[128];
-        snprintf(message, sizeof(message), "Route found: %zu points / %zu hitboxes", solution.size(), hitboxCount);
+        snprintf(message, sizeof(message), "Cube solver armed: %zu hazards", hazards);
         setStatus(message);
-        Notification::create("Geometric route found (physics validation pending)", NotificationIcon::Success)->show();
     }
     void onReplay(CCObject*) {
         if (!solved || solution.empty() || solvedLevel != levelName(m_layer)) {
             setStatus("Replay locked: solve this level first");
             return;
         }
-        // Route-following control is intentionally guarded as experimental:
-        // the geometric route is not yet a validated input sequence.
-        setStatus("Route found, but replay input timing is not available yet");
-        // Do not show a toast over the controls; keep the explanation inside the popup.
+        if (!m_layer || !m_layer->m_player1 || !m_layer->m_player1->isInNormalMode()) {
+            setStatus("Replay supports normal cube mode only");
+            return;
+        }
+        replaying = true;
+        replayClock = 0.f;
+        replayNode = 0;
+        lastReplayHazard = nullptr;
+        releaseReplayJump = false;
+        replayCooldown = 0.f;
+        autoClickClock = 0.f;
+        setStatus("Replay started: reactive cube controller");
+        this->onClose(nullptr);
     }
     void addButton(CCMenu* menu, char const* label, CCPoint pos, SEL_MenuHandler callback, bool enabled = true) {
         auto sprite = ButtonSprite::create(label, "bigFont.fnt", "GJ_button_01.png", .48f);
@@ -280,13 +306,52 @@ class $modify(UraniumPlayLayer, PlayLayer) {
     void update(float dt) {
         PlayLayer::update(dt);
         if (!m_player1 || m_isPaused || m_hasCompletedLevel) return;
+
+        if (uranium::replaying) {
+            auto* player = m_player1;
+            uranium::replayCooldown = std::max(0.f, uranium::replayCooldown - dt);
+            if (uranium::releaseReplayJump) {
+                player->releaseButton(PlayerButton::Jump);
+                uranium::releaseReplayJump = false;
+            }
+
+            // Reactive cube controller: choose the nearest upcoming hazard and
+            // jump shortly before its hitbox reaches the player's horizontal
+            // position. The game itself supplies collision/physics each frame.
+            if (player->isInNormalMode() && player->m_isOnGround &&
+                uranium::replayCooldown <= 0.f && m_objects) {
+                GameObject* nearest = nullptr;
+                float nearestDistance = 1.0e9f;
+                const float playerX = player->getPositionX();
+                for (unsigned int i = 0; i < m_objects->count(); ++i) {
+                    auto* object = static_cast<GameObject*>(m_objects->objectAtIndex(i));
+                    if (!object || object->m_objectType != GameObjectType::Hazard) continue;
+                    auto rect = object->getObjectRect();
+                    const float distance = rect.getMinX() - playerX;
+                    if (distance > 0.f && distance < nearestDistance) {
+                        nearestDistance = distance;
+                        nearest = object;
+                    }
+                }
+                if (nearest && nearest != uranium::lastReplayHazard &&
+                    nearestDistance <= 48.f && nearestDistance >= 18.f) {
+                    player->pushButton(PlayerButton::Jump);
+                    uranium::releaseReplayJump = true;
+                    uranium::lastReplayHazard = nearest;
+                    uranium::replayCooldown = uranium::autoClick17 ? (1.f / 17.f) : .08f;
+                }
+            }
+            // Stop cleanly after completion; if the player dies, leave the
+            // controller armed so it can continue after the game's respawn.
+            if (m_hasCompletedLevel) uranium::replaying = false;
+            return;
+        }
+
+        if (!uranium::autoClick17) return;
         uranium::autoClickClock += dt;
-        // Enabled means cap generated jump taps at 17 CPS. Disabled means no
-        // 17-CPS limiter: permit a tap each game update (bounded by actual TPS).
-        float interval = uranium::autoClick17 ? (1.f / 17.f) : 0.f;
-        if (interval <= 0.f || uranium::autoClickClock >= interval) {
-            if (interval > 0.f) uranium::autoClickClock = std::fmod(uranium::autoClickClock, interval);
-            else uranium::autoClickClock = 0.f;
+        constexpr float interval = 1.f / 17.f;
+        if (uranium::autoClickClock >= interval) {
+            uranium::autoClickClock = std::fmod(uranium::autoClickClock, interval);
             m_player1->pushButton(PlayerButton::Jump);
             m_player1->releaseButton(PlayerButton::Jump);
         }
