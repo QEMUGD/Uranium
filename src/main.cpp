@@ -157,6 +157,7 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
 
 class LevelChoicePopup final : public Popup {
     PlayLayer* m_layer = nullptr;
+    PauseLayer* m_pauseLayer = nullptr;
     CCLabelBMFont* m_status = nullptr;
     CCMenuItemSpriteExtra* m_replay = nullptr;
     CCLabelBMFont* m_tpsStatus = nullptr;
@@ -231,6 +232,9 @@ class LevelChoicePopup final : public Popup {
         autoClickClock = 0.f;
         setStatus("Replay started: reactive cube controller");
         this->onClose(nullptr);
+        // This popup is opened from the pause menu. Closing the popup alone
+        // leaves the game paused, so resume the underlying PauseLayer too.
+        if (m_pauseLayer) m_pauseLayer->onResume(nullptr);
     }
     void addButton(CCMenu* menu, char const* label, CCPoint pos, SEL_MenuHandler callback, bool enabled = true) {
         auto sprite = ButtonSprite::create(label, "bigFont.fnt", "GJ_button_01.png", .48f);
@@ -240,9 +244,10 @@ class LevelChoicePopup final : public Popup {
         menu->addChild(item);
         if (std::string(label) == "Replay") m_replay = item;
     }
-    bool init(PlayLayer* layer) {
+    bool init(PlayLayer* layer, PauseLayer* pauseLayer) {
         if (!Popup::init(360.f, 260.f)) return false;
         m_layer = layer;
+        m_pauseLayer = pauseLayer;
         setTitle("Uranium Pathfinder");
         auto menu = CCMenu::create();
         menu->setPosition(CCPointZero);
@@ -266,9 +271,9 @@ class LevelChoicePopup final : public Popup {
         return true;
     }
 public:
-    static LevelChoicePopup* create(PlayLayer* layer) {
+    static LevelChoicePopup* create(PlayLayer* layer, PauseLayer* pauseLayer) {
         auto p = new LevelChoicePopup();
-        if (p && p->init(layer)) { p->autorelease(); return p; }
+        if (p && p->init(layer, pauseLayer)) { p->autorelease(); return p; }
         CC_SAFE_DELETE(p);
         return nullptr;
     }
@@ -291,7 +296,7 @@ class $modify(UraniumPauseLayer, PauseLayer) {
 
     void onUranium(CCObject*) {
         auto layer = PlayLayer::get();
-        if (auto popup = uranium::LevelChoicePopup::create(layer)) popup->show();
+        if (auto popup = uranium::LevelChoicePopup::create(layer, this)) popup->show();
         else Notification::create("Uranium could not open the pathfinder menu", NotificationIcon::Warning)->show();
     }
 };
