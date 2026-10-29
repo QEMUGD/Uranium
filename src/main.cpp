@@ -23,7 +23,7 @@ static size_t replayNode = 0;
 static float replayClock = 0.f;
 static bool autoClick17 = false;
 static float autoClickClock = 0.f;
-static int targetTPS = 60;
+static int targetTPS = 240;
 static bool tpsBypassEnabled = false;
 static constexpr float CELL_SIZE = 12.f;
 static constexpr float PLAYER_MARGIN = 12.f;
@@ -150,7 +150,7 @@ class LevelChoicePopup final : public Popup {
     void setStatus(char const* text) { if (m_status) m_status->setString(text); }
     void onAutoClick(CCObject*) {
         autoClick17 = !autoClick17;
-        setStatus(autoClick17 ? "17 CPS auto-click: ON" : "17 CPS auto-click: OFF");
+        setStatus(autoClick17 ? "17 CPS cap: ON (max 17 clicks/s)" : "17 CPS cap: OFF (uncapped)");
     }
     void onTPSDown(CCObject*) {
         targetTPS = std::max(5, targetTPS - 5);
@@ -214,7 +214,7 @@ class LevelChoicePopup final : public Popup {
                   solved && solvedLevel == levelName(layer));
         addButton(menu, "Solve", {170.f, 120.f}, menu_selector(LevelChoicePopup::onSolve));
         addButton(menu, "Normal", {265.f, 120.f}, menu_selector(LevelChoicePopup::onNormal));
-        addButton(menu, "17 CPS", {75.f, 65.f}, menu_selector(LevelChoicePopup::onAutoClick));
+        addButton(menu, "17 CPS Cap", {75.f, 65.f}, menu_selector(LevelChoicePopup::onAutoClick));
         addButton(menu, "TPS -", {145.f, 65.f}, menu_selector(LevelChoicePopup::onTPSDown));
         addButton(menu, "TPS +", {215.f, 65.f}, menu_selector(LevelChoicePopup::onTPSUp));
         addChild(menu);
@@ -269,11 +269,14 @@ class $modify(UraniumPlayLayer, PlayLayer) {
 
     void update(float dt) {
         PlayLayer::update(dt);
-        if (!uranium::autoClick17 || !m_player1 || m_isPaused || m_hasCompletedLevel) return;
+        if (!m_player1 || m_isPaused || m_hasCompletedLevel) return;
         uranium::autoClickClock += dt;
-        constexpr float interval = 1.f / 17.f;
-        if (uranium::autoClickClock >= interval) {
-            uranium::autoClickClock = std::fmod(uranium::autoClickClock, interval);
+        // Enabled means cap generated jump taps at 17 CPS. Disabled means no
+        // 17-CPS limiter: permit a tap each game update (bounded by actual TPS).
+        float interval = uranium::autoClick17 ? (1.f / 17.f) : 0.f;
+        if (interval <= 0.f || uranium::autoClickClock >= interval) {
+            if (interval > 0.f) uranium::autoClickClock = std::fmod(uranium::autoClickClock, interval);
+            else uranium::autoClickClock = 0.f;
             m_player1->pushButton(PlayerButton::Jump);
             m_player1->releaseButton(PlayerButton::Jump);
         }
