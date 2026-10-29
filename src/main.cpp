@@ -100,13 +100,20 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     if (!valid(start.x,start.y) || !valid(goal.x,goal.y) ||
         blocked[static_cast<size_t>(key(start.x,start.y))] ||
         blocked[static_cast<size_t>(key(goal.x,goal.y))]) return {};
+    // Octile distance matches the 8-way movement cost, so A* doesn't
+    // overestimate diagonal routes and expands fewer irrelevant cells.
     auto heuristic = [&](int x, int y) {
-        return static_cast<float>(std::abs(goal.x-x) + std::abs(goal.y-y));
+        const int ax = std::abs(goal.x - x);
+        const int ay = std::abs(goal.y - y);
+        const int diagonal = std::min(ax, ay);
+        const int straight = std::max(ax, ay) - diagonal;
+        return static_cast<float>(diagonal) * 1.41421356f + static_cast<float>(straight);
     };
     struct Entry { float f; int id; };
     auto cmp = [](Entry const& a, Entry const& b) { return a.f > b.f; };
     std::priority_queue<Entry, std::vector<Entry>, decltype(cmp)> open(cmp);
     std::vector<SearchNode> nodes;
+    nodes.reserve(std::min<size_t>(count, 65536));
     std::vector<int> best(count, -1);
     nodes.push_back({start.x,start.y,0.f,heuristic(start.x,start.y),-1});
     best[static_cast<size_t>(key(start.x,start.y))] = 0;
@@ -118,7 +125,10 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     size_t expansions = 0;
     while (!open.empty() && expansions++ < 350000) {
         int id = open.top().id; open.pop();
-        auto n = nodes[static_cast<size_t>(id)];
+        auto const n = nodes[static_cast<size_t>(id)];
+        // A cell can be queued more than once; discard obsolete queue entries.
+        int currentBest = best[static_cast<size_t>(key(n.x, n.y))];
+        if (currentBest != id) continue;
         if (n.x == goal.x && n.y == goal.y) { found = id; break; }
         for (int i = 0; i < 8; ++i) {
             int x = n.x + dx[i], y = n.y + dy[i];
