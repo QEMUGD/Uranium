@@ -1,6 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
-#include <Geode/modify/LevelInfoLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <algorithm>
 #include <cmath>
 #include <queue>
@@ -214,67 +214,24 @@ public:
 };
 } // namespace uranium
 
-namespace uranium {
-static bool bypassLevelInfoHook = false;
-enum class EntryChoice { Normal, Solve, Replay };
-static EntryChoice entryChoice = EntryChoice::Normal;
-
-class LaunchChoicePopup final : public Popup {
-    LevelInfoLayer* m_info = nullptr;
-
-    void launch(EntryChoice choice) {
-        if (!m_info) return;
-        entryChoice = choice;
-        bypassLevelInfoHook = true;
-        m_info->onPlay(nullptr);
-        bypassLevelInfoHook = false;
-        this->onClose(nullptr);
-    }
-    void onNormal(CCObject*) { launch(EntryChoice::Normal); }
-    void onSolve(CCObject*) { launch(EntryChoice::Solve); }
-    void onReplay(CCObject*) { launch(EntryChoice::Replay); }
-
-    void addChoice(CCMenu* menu, char const* label, CCPoint pos, SEL_MenuHandler callback) {
-        auto sprite = ButtonSprite::create(label, "bigFont.fnt", "GJ_button_01.png", .7f);
-        auto item = CCMenuItemSpriteExtra::create(sprite, this, callback);
-        item->setPosition(pos);
-        menu->addChild(item);
-    }
-
-    bool init(LevelInfoLayer* info) {
-        if (!Popup::init(340.f, 220.f)) return false;
-        m_info = info;
-        setTitle("Uranium Pathfinder");
+class $modify(UraniumPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
         auto menu = CCMenu::create();
+        menu->setID("uranium-pause-menu");
         menu->setPosition(CCPointZero);
-        addChoice(menu, "Solve", {75.f, 105.f}, menu_selector(LaunchChoicePopup::onSolve));
-        addChoice(menu, "Replay", {170.f, 105.f}, menu_selector(LaunchChoicePopup::onReplay));
-        addChoice(menu, "Normal", {265.f, 105.f}, menu_selector(LaunchChoicePopup::onNormal));
-        addChild(menu);
-        auto status = CCLabelBMFont::create("Choose before the level launches", "chatFont.fnt");
-        status->setScale(.62f);
-        status->setPosition({170.f, 60.f});
-        addChild(status);
-        return true;
+        auto sprite = ButtonSprite::create("Uranium", "bigFont.fnt", "GJ_button_04.png", .6f);
+        auto item = CCMenuItemSpriteExtra::create(sprite, this, menu_selector(UraniumPauseLayer::onUranium));
+        item->setPosition({0.f, 0.f});
+        menu->addChild(item);
+        menu->setPosition({CCDirector::get()->getWinSize().width - 65.f, 45.f});
+        this->addChild(menu);
     }
-public:
-    static LaunchChoicePopup* create(LevelInfoLayer* info) {
-        auto p = new LaunchChoicePopup();
-        if (p && p->init(info)) { p->autorelease(); return p; }
-        CC_SAFE_DELETE(p);
-        return nullptr;
-    }
-};
-} // namespace uranium
 
-class $modify(UraniumLevelInfoLayer, LevelInfoLayer) {
-    void onPlay(CCObject* sender) {
-        if (uranium::bypassLevelInfoHook) {
-            LevelInfoLayer::onPlay(sender);
-            return;
-        }
-        if (auto popup = uranium::LaunchChoicePopup::create(this)) popup->show();
-        else LevelInfoLayer::onPlay(sender);
+    void onUranium(CCObject*) {
+        auto layer = PlayLayer::get();
+        if (auto popup = uranium::LevelChoicePopup::create(layer)) popup->show();
+        else Notification::create("Uranium could not open the pathfinder menu", NotificationIcon::Warning)->show();
     }
 };
 
