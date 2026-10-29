@@ -21,6 +21,10 @@ static bool replaying = false;
 static bool awaitingChoice = false;
 static size_t replayNode = 0;
 static float replayClock = 0.f;
+static bool autoClick17 = false;
+static float autoClickClock = 0.f;
+static int targetTPS = 60;
+static bool tpsBypassEnabled = false;
 static constexpr float CELL_SIZE = 12.f;
 static constexpr float PLAYER_MARGIN = 12.f;
 
@@ -142,6 +146,7 @@ class LevelChoicePopup final : public Popup {
     PlayLayer* m_layer = nullptr;
     CCLabelBMFont* m_status = nullptr;
     CCMenuItemSpriteExtra* m_replay = nullptr;
+    CCLabelBMFont* m_tpsStatus = nullptr;
     void setStatus(char const* text) { if (m_status) m_status->setString(text); }
     void onNormal(CCObject*) {
         replaying = false;
@@ -188,7 +193,7 @@ class LevelChoicePopup final : public Popup {
         if (std::string(label) == "Replay") m_replay = item;
     }
     bool init(PlayLayer* layer) {
-        if (!Popup::init(340.f, 235.f)) return false;
+        if (!Popup::init(340.f, 275.f)) return false;
         m_layer = layer;
         setTitle("Uranium Pathfinder");
         auto menu = CCMenu::create();
