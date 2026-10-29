@@ -148,6 +148,18 @@ class LevelChoicePopup final : public Popup {
     CCMenuItemSpriteExtra* m_replay = nullptr;
     CCLabelBMFont* m_tpsStatus = nullptr;
     void setStatus(char const* text) { if (m_status) m_status->setString(text); }
+    void onAutoClick(CCObject*) {
+        autoClick17 = !autoClick17;
+        setStatus(autoClick17 ? "17 CPS auto-click: ON" : "17 CPS auto-click: OFF");
+    }
+    void onTPSDown(CCObject*) {
+        targetTPS = std::max(5, targetTPS - 5);
+        if (m_tpsStatus) { char text[80]; snprintf(text, sizeof(text), "TPS target: %d (bypass not active)", targetTPS); m_tpsStatus->setString(text); }
+    }
+    void onTPSUp(CCObject*) {
+        targetTPS = std::min(5000, targetTPS + 5);
+        if (m_tpsStatus) { char text[80]; snprintf(text, sizeof(text), "TPS target: %d (bypass not active)", targetTPS); m_tpsStatus->setString(text); }
+    }
     void onNormal(CCObject*) {
         replaying = false;
         awaitingChoice = false;
@@ -202,11 +214,19 @@ class LevelChoicePopup final : public Popup {
                   solved && solvedLevel == levelName(layer));
         addButton(menu, "Solve", {170.f, 120.f}, menu_selector(LevelChoicePopup::onSolve));
         addButton(menu, "Normal", {265.f, 120.f}, menu_selector(LevelChoicePopup::onNormal));
+        addButton(menu, "17 CPS", {75.f, 65.f}, menu_selector(LevelChoicePopup::onAutoClick));
+        addButton(menu, "TPS -", {145.f, 65.f}, menu_selector(LevelChoicePopup::onTPSDown));
+        addButton(menu, "TPS +", {215.f, 65.f}, menu_selector(LevelChoicePopup::onTPSUp));
         addChild(menu);
         m_status = CCLabelBMFont::create("Choose how to enter this level", "chatFont.fnt");
-        m_status->setScale(.62f);
-        m_status->setPosition({170.f, 70.f});
+        m_status->setScale(.55f);
+        m_status->setPosition({170.f, 95.f});
         addChild(m_status);
+        char tpsText[80]; snprintf(tpsText, sizeof(tpsText), "TPS target: %d (bypass not active)", targetTPS);
+        m_tpsStatus = CCLabelBMFont::create(tpsText, "chatFont.fnt");
+        m_tpsStatus->setScale(.48f);
+        m_tpsStatus->setPosition({170.f, 35.f});
+        addChild(m_tpsStatus);
         return true;
     }
 public:
@@ -243,8 +263,19 @@ class $modify(UraniumPauseLayer, PauseLayer) {
 class $modify(UraniumPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
-        uranium::replaying = uranium::entryChoice == uranium::EntryChoice::Replay;
         uranium::awaitingChoice = false;
         return true;
+    }
+
+    void update(float dt) {
+        PlayLayer::update(dt);
+        if (!uranium::autoClick17 || !m_player1 || m_isPaused || m_hasCompletedLevel) return;
+        uranium::autoClickClock += dt;
+        constexpr float interval = 1.f / 17.f;
+        if (uranium::autoClickClock >= interval) {
+            uranium::autoClickClock = std::fmod(uranium::autoClickClock, interval);
+            m_player1->pushButton(PlayerButton::Jump);
+            m_player1->releaseButton(PlayerButton::Jump);
+        }
     }
 };
