@@ -413,21 +413,28 @@ class $modify(UraniumPlayLayer, PlayLayer) {
 
                 if (nearest && nearest != uranium::lastReplayHazard) {
                     const int delayFrames = uranium::predictJumpDelay(player, nearest, speedPerFrame);
-                    if (delayFrames == 0) {
+                    // Recompute from the live position every update. A positive delay
+                    // means "not yet"; jumping when distance <= speed * delay was
+                    // inverted and caused the controller to jump too late.
+                    bool shouldJump = (delayFrames == 0);
+
+                    // If the approximate trajectory cannot classify this object,
+                    // retain a simple last-resort cube trigger rather than silently
+                    // leaving replay armed without ever pressing Jump.
+                    if (delayFrames < 0) {
+                        const float fallbackDistance = std::max(35.f, speedPerFrame * 8.f);
+                        shouldJump = nearestDistance <= fallbackDistance;
+                        if (shouldJump)
+                            log::warn("Uranium: using fallback jump for unclassified hazard");
+                    }
+
+                    if (shouldJump) {
                         player->pushButton(PlayerButton::Jump);
                         uranium::releaseReplayJump = true;
                         uranium::lastReplayHazard = nearest;
-                        uranium::replayCooldown = .04f;
-                    } else if (delayFrames > 0) {
-                        // Wait until the predicted takeoff point. Re-evaluate each
-                        // frame so speed changes or a moving player do not stale the plan.
-                        const float targetDistance = speedPerFrame * static_cast<float>(delayFrames);
-                        if (nearestDistance <= targetDistance + speedPerFrame * 0.5f) {
-                            player->pushButton(PlayerButton::Jump);
-                            uranium::releaseReplayJump = true;
-                            uranium::lastReplayHazard = nearest;
-                            uranium::replayCooldown = .04f;
-                        }
+                        uranium::replayCooldown = .08f;
+                        log::info("Uranium: jump input sent (hazard distance {:.1f}, prediction {})",
+                            nearestDistance, delayFrames);
                     }
                 }
             } else {
