@@ -145,6 +145,7 @@ class LevelChoicePopup final : public Popup {
     void onNormal(CCObject*) {
         replaying = false;
         awaitingChoice = false;
+        if (m_layer) m_layer->resumeSchedulerAndActions();
         this->onClose(nullptr);
     }
     void onSolve(CCObject*) {
@@ -223,9 +224,11 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         if (current != "unknown") {
             uranium::awaitingChoice = true;
             if (auto popup = uranium::LevelChoicePopup::create(this)) {
+                this->pauseSchedulerAndActions();
                 popup->show();
             } else {
                 uranium::awaitingChoice = false;
+                this->resumeSchedulerAndActions();
             }
         }
         return true;
