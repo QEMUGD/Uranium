@@ -25,7 +25,7 @@ jobs:
         with:
           sdk: latest
           target: Win64
-          combine: false
+          combine: true
 
   build-android:
     name: Build Android Geode mod
@@ -38,4 +38,4 @@ jobs:
         with:
           sdk: latest
           target: Android32
-          combine: false
+          combine: true
