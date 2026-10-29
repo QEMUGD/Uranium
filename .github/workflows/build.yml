@@ -27,15 +27,28 @@ jobs:
           target: Win64
           combine: true
 
-  build-android:
-    name: Build Android Geode mod
+  build-android32:
+    name: Build Android 32-bit Geode mod
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Build Geode mod for Android
+      - name: Build Geode mod for Android 32-bit
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: latest
           target: Android32
+          combine: true
+
+  build-android64:
+    name: Build Android 64-bit Geode mod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build Geode mod for Android 64-bit
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: latest
+          target: Android64
           combine: true
