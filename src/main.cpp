@@ -37,6 +37,8 @@ static constexpr float CELL_SIZE = 12.f;
 static constexpr float PLAYER_MARGIN = 12.f;
 static float previousPlayerX = 0.f;
 static bool hasPreviousPlayerX = false;
+static float estimatedSpeedPerFrame = 5.f;
+static int speedSamples = 0;
 
 static int predictJumpDelay(PlayerObject* player, GameObject* hazard, float speedPerFrame) {
     if (!player || !hazard || speedPerFrame <= 0.01f) return -1;
@@ -239,9 +241,10 @@ class LevelChoicePopup final : public Popup {
         }
 
         struct DPNode { int yq; int vyq; bool grounded; int parent; bool jump; };
-        constexpr float yQuantum = 2.f, vyQuantum = 0.5f;
+        constexpr float yQuantum = 1.f, vyQuantum = 0.25f;
         constexpr int maxTicks = 12000;
-        constexpr size_t maxStates = 450000;
+        // Finer states improve timing; cap memory use on mobile.
+        constexpr size_t maxStates = 1200000;
         constexpr float playerHalfWidth = 10.f, playerHalfHeight = 10.f;
         const float startX = player->getPositionX();
         const float baseY = player->getPositionY();
@@ -264,7 +267,7 @@ class LevelChoicePopup final : public Popup {
             // Ignore hazards whose whole collision box is already behind the player's
             // front edge. Including them makes every first-step state look dead when
             // Solve is pressed after the player has reached/passed the opening spike.
-            if (r.getMaxX() <= startX + playerHalfWidth + 1.f) continue;
+            if (r.getMinX() <= startX + playerHalfWidth + 2.f) continue;
             hazards.push_back({r.getMinX(), r.getMinY(), r.getMaxX(), r.getMaxY()});
             farthestX = std::max(farthestX, r.getMaxX());
         }
@@ -276,8 +279,8 @@ class LevelChoicePopup final : public Popup {
             return a.left < b.left;
         });
 
-        // A conservative baseline speed. Do not use a stale previous-level sample.
-        const float speedPerFrame = 5.f;
+        // Use measured player motion where available, with a normal-speed fallback.
+        const float speedPerFrame = std::clamp(estimatedSpeedPerFrame, 2.f, 12.f);
         const int horizon = std::clamp(static_cast<int>(std::ceil(
             (farthestX - startX + 80.f) / speedPerFrame)), 1, maxTicks);
         auto collides = [&](float x, float y) {
@@ -363,8 +366,8 @@ class LevelChoicePopup final : public Popup {
         solution.assign(1, Cell{0, 0});
         if (m_replay) m_replay->setEnabled(true);
         char message[128];
-        snprintf(message, sizeof(message), "Route found: %zu jumps, %zu states",
-            plannedJumpFrames.size(), nodes.size());
+        snprintf(message, sizeof(message), "Route: %zu jumps, %zu states, %.2f u/frame",
+            plannedJumpFrames.size(), nodes.size(), speedPerFrame);
         setStatus(message);
     }
     void onReplay(CCObject*) {
@@ -460,9 +463,8 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         return true;
     }
     void update(float dt) {
-        PlayLayer::update(dt);
-        if (!m_player1 || m_isPaused || m_hasCompletedLevel) return;
-        if (uranium::replaying) {
+        // Apply replay input BEFORE the game update, avoiding a one-frame-late jump.
+        if (m_player1 && !m_isPaused && !m_hasCompletedLevel && uranium::replaying) {
             auto* player = m_player1;
             if (uranium::releaseReplayJump) {
                 player->releaseButton(PlayerButton::Jump);
@@ -471,21 +473,50 @@ class $modify(UraniumPlayLayer, PlayLayer) {
             uranium::replayFrameAccumulator += std::max(0.f, dt) * 60.f;
             int steps = static_cast<int>(uranium::replayFrameAccumulator);
             uranium::replayFrameAccumulator -= static_cast<float>(steps);
-            for (int i = 0; i < steps; ++i, ++uranium::replayFrame) {
+            // On slow mobile rendering, throttle replay rather than skipping a planned tick.
+            if (steps > 1) {
+                uranium::replayFrameAccumulator += static_cast<float>(steps - 1);
+                steps = 1;
+            }
+            if (steps == 1) {
+                ++uranium::replayFrame;
                 if (uranium::replayNode < uranium::plannedJumpFrames.size() &&
-                    uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame + 1) {
+                    uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame) {
                     player->pushButton(PlayerButton::Jump);
                     uranium::releaseReplayJump = true;
                     ++uranium::replayNode;
                 }
             }
+        }
+
+        PlayLayer::update(dt);
+
+        if (!m_player1 || m_isPaused || m_hasCompletedLevel) {
             if (m_hasCompletedLevel) {
                 uranium::replaying = false;
-                player->releaseButton(PlayerButton::Jump);
+                if (m_player1) m_player1->releaseButton(PlayerButton::Jump);
             }
             return;
         }
-        if (!uranium::autoClick17) return;
+
+        // Calibrate world speed from live player movement instead of assuming a fixed rate.
+        const float x = m_player1->getPositionX();
+        const float frameScale = std::clamp(std::max(0.f, dt) * 60.f, 0.25f, 4.f);
+        if (uranium::hasPreviousPlayerX) {
+            const float dx = x - uranium::previousPlayerX;
+            const float sample = dx / frameScale;
+            if (std::isfinite(sample) && sample > 0.25f && sample < 20.f) {
+                const int oldSamples = std::min(uranium::speedSamples, 15);
+                uranium::estimatedSpeedPerFrame =
+                    (uranium::estimatedSpeedPerFrame * static_cast<float>(oldSamples) + sample) /
+                    static_cast<float>(oldSamples + 1);
+                ++uranium::speedSamples;
+            }
+        }
+        uranium::previousPlayerX = x;
+        uranium::hasPreviousPlayerX = true;
+
+        if (uranium::replaying || !uranium::autoClick17) return;
         uranium::autoClickClock += dt;
         constexpr float interval = 1.f / 17.f;
         if (uranium::autoClickClock >= interval) {
