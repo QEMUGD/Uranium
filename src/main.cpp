@@ -251,6 +251,9 @@ class LevelChoicePopup final : public Popup {
         this->onClose(nullptr);
     }
     void onSolve(CCObject*) {
+        solved = false;
+        solution.clear();
+        plannedJumpFrames.clear();
         if (!m_layer || !m_layer->m_player1 || !m_layer->m_objects) {
             setStatus("No active level objects");
             return;
