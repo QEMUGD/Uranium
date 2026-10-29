@@ -193,11 +193,11 @@ class LevelChoicePopup final : public Popup {
         }
         // Route-following control is intentionally guarded as experimental:
         // the geometric route is not yet a validated input sequence.
-        setStatus("Route ready; physics-based execution is not validated yet");
-        Notification::create("Route found, but automated execution needs the physics solver", NotificationIcon::Warning)->show();
+        setStatus("Route found, but replay input timing is not available yet");
+        // Do not show a toast over the controls; keep the explanation inside the popup.
     }
     void addButton(CCMenu* menu, char const* label, CCPoint pos, SEL_MenuHandler callback, bool enabled = true) {
-        auto sprite = ButtonSprite::create(label, "bigFont.fnt", "GJ_button_01.png", .7f);
+        auto sprite = ButtonSprite::create(label, "bigFont.fnt", "GJ_button_01.png", .48f);
         auto item = CCMenuItemSpriteExtra::create(sprite, this, callback);
         item->setPosition(pos);
         item->setEnabled(enabled);
@@ -205,27 +205,27 @@ class LevelChoicePopup final : public Popup {
         if (std::string(label) == "Replay") m_replay = item;
     }
     bool init(PlayLayer* layer) {
-        if (!Popup::init(340.f, 275.f)) return false;
+        if (!Popup::init(360.f, 260.f)) return false;
         m_layer = layer;
         setTitle("Uranium Pathfinder");
         auto menu = CCMenu::create();
         menu->setPosition(CCPointZero);
-        addButton(menu, "Replay", {75.f, 120.f}, menu_selector(LevelChoicePopup::onReplay),
+        addButton(menu, "Replay", {65.f, 112.f}, menu_selector(LevelChoicePopup::onReplay),
                   solved && solvedLevel == levelName(layer));
-        addButton(menu, "Solve", {170.f, 120.f}, menu_selector(LevelChoicePopup::onSolve));
-        addButton(menu, "Normal", {265.f, 120.f}, menu_selector(LevelChoicePopup::onNormal));
-        addButton(menu, "17 CPS Cap", {75.f, 65.f}, menu_selector(LevelChoicePopup::onAutoClick));
-        addButton(menu, "TPS -", {145.f, 65.f}, menu_selector(LevelChoicePopup::onTPSDown));
-        addButton(menu, "TPS +", {215.f, 65.f}, menu_selector(LevelChoicePopup::onTPSUp));
+        addButton(menu, "Solve", {180.f, 112.f}, menu_selector(LevelChoicePopup::onSolve));
+        addButton(menu, "Normal", {295.f, 112.f}, menu_selector(LevelChoicePopup::onNormal));
+        addButton(menu, "17 CPS Cap", {75.f, 62.f}, menu_selector(LevelChoicePopup::onAutoClick));
+        addButton(menu, "TPS -", {180.f, 62.f}, menu_selector(LevelChoicePopup::onTPSDown));
+        addButton(menu, "TPS +", {285.f, 62.f}, menu_selector(LevelChoicePopup::onTPSUp));
         addChild(menu);
         m_status = CCLabelBMFont::create("Choose how to enter this level", "chatFont.fnt");
-        m_status->setScale(.55f);
-        m_status->setPosition({170.f, 95.f});
+        m_status->setScale(.42f);
+        m_status->setPosition({180.f, 35.f});
         addChild(m_status);
         char tpsText[80]; snprintf(tpsText, sizeof(tpsText), "TPS target: %d (bypass not active)", targetTPS);
         m_tpsStatus = CCLabelBMFont::create(tpsText, "chatFont.fnt");
-        m_tpsStatus->setScale(.48f);
-        m_tpsStatus->setPosition({170.f, 35.f});
+        m_tpsStatus->setScale(.40f);
+        m_tpsStatus->setPosition({180.f, 14.f});
         addChild(m_tpsStatus);
         return true;
     }
