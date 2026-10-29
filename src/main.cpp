@@ -38,10 +38,6 @@ static constexpr float PLAYER_MARGIN = 12.f;
 static float previousPlayerX = 0.f;
 static bool hasPreviousPlayerX = false;
 
-// Predict a normal-cube jump using the live player's jump-start velocity and
-// gravity. The simulation uses quarter-frame steps like GD's fixed-step loop.
-// Returns the number of frames to wait before jumping, or -1 if no safe arc
-// was found for this hazard.
 static int predictJumpDelay(PlayerObject* player, GameObject* hazard, float speedPerFrame) {
     if (!player || !hazard || speedPerFrame <= 0.01f) return -1;
     const auto obstacle = hazard->getObjectRect();
@@ -54,18 +50,12 @@ static int predictJumpDelay(PlayerObject* player, GameObject* hazard, float spee
     const float jumpVelocity = static_cast<float>(player->m_yStart);
     if (!std::isfinite(gravity) || !std::isfinite(jumpVelocity) ||
         gravity <= 0.f || jumpVelocity <= 0.f) return -1;
-
-    // Try increasingly later takeoff points. A candidate is safe only if the
-    // predicted player box avoids the hazard for the whole horizontal crossing.
-    constexpr float substep = 0.25f; // quarter of a 60 Hz physics frame
+    constexpr float substep = 0.25f;
     constexpr int maxDelayFrames = 48;
     constexpr int maxFlightFrames = 100;
     for (int delay = 0; delay <= maxDelayFrames; ++delay) {
-        float y = 0.f;
-        float vy = 0.f;
-        bool jumping = false;
-        bool safe = true;
-        bool crossed = false;
+        float y = 0.f, vy = 0.f;
+        bool jumping = false, safe = true, crossed = false;
         for (int step = 0; step < maxFlightFrames * 4; ++step) {
             const float frame = static_cast<float>(step) * substep;
             if (!jumping && frame >= static_cast<float>(delay)) {
@@ -78,14 +68,11 @@ static int predictJumpDelay(PlayerObject* player, GameObject* hazard, float spee
                 if (y <= 0.f && frame > static_cast<float>(delay) + 1.f) {
                     y = 0.f;
                     vy = 0.f;
-                    // Continue checking horizontal travel after landing.
                 }
             }
             const float x = px + speedPerFrame * frame;
-            const float left = x - playerHalfWidth;
-            const float right = x + playerHalfWidth;
-            const float bottom = py + y - playerHalfHeight;
-            const float top = py + y + playerHalfHeight;
+            const float left = x - playerHalfWidth, right = x + playerHalfWidth;
+            const float bottom = py + y - playerHalfHeight, top = py + y + playerHalfHeight;
             if (right >= obstacle.getMinX() && left <= obstacle.getMaxX()) {
                 if (top > obstacle.getMinY() && bottom < obstacle.getMaxY()) {
                     safe = false;
@@ -105,7 +92,6 @@ static std::string levelName(PlayLayer* layer) {
     return std::string(layer->m_level->m_levelName.c_str());
 }
 
-// Build a coarse collision occupancy map from the actual objects loaded by GD.
 static std::vector<Hitbox> collectHitboxes(PlayLayer* layer, float& minX, float& maxX, float& minY, float& maxY) {
     std::vector<Hitbox> boxes;
     minX = layer->m_player1 ? layer->m_player1->getPositionX() : 0.f;
@@ -123,14 +109,10 @@ static std::vector<Hitbox> collectHitboxes(PlayLayer* layer, float& minX, float&
         minY = std::min(minY, r.getMinY() - 48.f);
         maxY = std::max(maxY, r.getMaxY() + 48.f);
     }
-    // Avoid unbounded maps for exceptionally long levels.
     maxX = std::min(maxX, minX + 12000.f);
     return boxes;
 }
 
-// A* searches free space through the hitbox map. This is a geometric route
-// planner; it is not yet a full GD physics simulator (jump arcs, gravity,
-// speed portals and mode changes still need to be modelled).
 static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     float minX, maxX, minY, maxY;
     auto boxes = collectHitboxes(layer, minX, maxX, minY, maxY);
@@ -153,9 +135,7 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     auto* player = layer->m_player1;
     if (!player) return {};
     Cell start{toCellX(player->getPositionX()), toCellY(player->getPositionY())};
-    // Target is the furthest mapped point, at the player's current height.
     Cell goal{width - 1, start.y};
-    // Find a free starting cell nearby if the player's current cell overlaps a hitbox.
     auto nearestFree = [&](Cell c) {
         for (int radius = 0; radius < 8; ++radius)
             for (int dy = -radius; dy <= radius; ++dy)
@@ -172,13 +152,9 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     if (!valid(start.x,start.y) || !valid(goal.x,goal.y) ||
         blocked[static_cast<size_t>(key(start.x,start.y))] ||
         blocked[static_cast<size_t>(key(goal.x,goal.y))]) return {};
-    // Octile distance matches the 8-way movement cost, so A* doesn't
-    // overestimate diagonal routes and expands fewer irrelevant cells.
     auto heuristic = [&](int x, int y) {
-        const int ax = std::abs(goal.x - x);
-        const int ay = std::abs(goal.y - y);
-        const int diagonal = std::min(ax, ay);
-        const int straight = std::max(ax, ay) - diagonal;
+        const int ax = std::abs(goal.x - x), ay = std::abs(goal.y - y);
+        const int diagonal = std::min(ax, ay), straight = std::max(ax, ay) - diagonal;
         return static_cast<float>(diagonal) * 1.41421356f + static_cast<float>(straight);
     };
     struct Entry { float f; int id; };
@@ -190,7 +166,6 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     nodes.push_back({start.x,start.y,0.f,heuristic(start.x,start.y),-1});
     best[static_cast<size_t>(key(start.x,start.y))] = 0;
     open.push({nodes[0].f,0});
-    // Eight directions make the geometric route less blocky.
     constexpr int dx[] = {1,-1,0,0,1,1,-1,-1};
     constexpr int dy[] = {0,0,1,-1,1,-1,1,-1};
     int found = -1;
@@ -198,9 +173,7 @@ static std::vector<Cell> findRoute(PlayLayer* layer, size_t& boxCount) {
     while (!open.empty() && expansions++ < 350000) {
         int id = open.top().id; open.pop();
         auto const n = nodes[static_cast<size_t>(id)];
-        // A cell can be queued more than once; discard obsolete queue entries.
-        int currentBest = best[static_cast<size_t>(key(n.x, n.y))];
-        if (currentBest != id) continue;
+        if (best[static_cast<size_t>(key(n.x, n.y))] != id) continue;
         if (n.x == goal.x && n.y == goal.y) { found = id; break; }
         for (int i = 0; i < 8; ++i) {
             int x = n.x + dx[i], y = n.y + dy[i];
@@ -254,34 +227,22 @@ class LevelChoicePopup final : public Popup {
         solved = false;
         solution.clear();
         plannedJumpFrames.clear();
+        if (m_replay) m_replay->setEnabled(false);
         if (!m_layer || !m_layer->m_player1 || !m_layer->m_objects) {
             setStatus("No active level objects");
             return;
         }
         auto* player = m_layer->m_player1;
         if (!player->isInNormalMode()) {
-            solved = false;
-            solution.clear();
-            plannedJumpFrames.clear();
-            setStatus("DP pathfinder currently supports cube mode only");
+            setStatus("Pathfinder currently supports cube mode only");
             return;
         }
 
-        // Reachability DP adapted from the approach described in gdsolver
-        // (MIT; see THIRD_PARTY_NOTICES.md): keep reachable (height, vertical
-        // velocity, grounded) states per tick, try both jump/no-jump inputs,
-        // discard collisions, and backtrack a surviving input plan.
-        struct DPNode {
-            int yq;
-            int vyq;
-            bool grounded;
-            int parent;
-            bool jump;
-        };
-        constexpr float yQuantum = 2.f;
-        constexpr float vyQuantum = 0.5f;
+        struct DPNode { int yq; int vyq; bool grounded; int parent; bool jump; };
+        constexpr float yQuantum = 2.f, vyQuantum = 0.5f;
         constexpr int maxTicks = 12000;
         constexpr size_t maxStates = 450000;
+        constexpr float playerHalfWidth = 10.f, playerHalfHeight = 10.f;
         const float startX = player->getPositionX();
         const float baseY = player->getPositionY();
         const float gravity = std::max(0.05f, static_cast<float>(player->m_gravity) *
@@ -289,7 +250,7 @@ class LevelChoicePopup final : public Popup {
         const float jumpVelocity = static_cast<float>(player->m_yStart);
         if (!std::isfinite(gravity) || !std::isfinite(jumpVelocity) ||
             gravity <= 0.f || jumpVelocity <= 0.f) {
-            setStatus("DP failed: invalid cube physics values");
+            setStatus("Solve failed: invalid cube physics");
             return;
         }
 
@@ -299,60 +260,53 @@ class LevelChoicePopup final : public Popup {
             auto* object = static_cast<GameObject*>(m_layer->m_objects->objectAtIndex(i));
             if (!object || object->m_objectType != GameObjectType::Hazard) continue;
             const auto r = object->getObjectRect();
-            if (r.size.width <= 0.f || r.size.height <= 0.f || r.getMaxX() < startX) continue;
+            if (r.size.width <= 0.f || r.size.height <= 0.f) continue;
+            // Ignore hazards whose whole collision box is already behind the player's
+            // front edge. Including them makes every first-step state look dead when
+            // Solve is pressed after the player has reached/passed the opening spike.
+            if (r.getMaxX() <= startX + playerHalfWidth + 1.f) continue;
             hazards.push_back({r.getMinX(), r.getMinY(), r.getMaxX(), r.getMaxY()});
             farthestX = std::max(farthestX, r.getMaxX());
         }
         if (hazards.empty()) {
-            setStatus("DP found no upcoming hazards");
+            setStatus("No upcoming hazards in this section");
             return;
         }
         std::sort(hazards.begin(), hazards.end(), [](const Hitbox& a, const Hitbox& b) {
             return a.left < b.left;
         });
 
-        // Estimate world speed from the most recent live samples; use a conservative
-        // normal-speed fallback if Solve was opened before samples were collected.
-        float speedPerFrame = 5.f;
-        if (hasPreviousPlayerX) {
-            const float dx = startX - previousPlayerX;
-            if (std::isfinite(dx) && dx > 0.1f && dx < 40.f) speedPerFrame = dx;
-        }
-        const int horizon = std::clamp(static_cast<int>(std::ceil((farthestX - startX + 80.f) /
-            speedPerFrame)), 1, maxTicks);
-
+        // A conservative baseline speed. Do not use a stale previous-level sample.
+        const float speedPerFrame = 5.f;
+        const int horizon = std::clamp(static_cast<int>(std::ceil(
+            (farthestX - startX + 80.f) / speedPerFrame)), 1, maxTicks);
         auto collides = [&](float x, float y) {
-            constexpr float halfW = 10.f;
-            constexpr float halfH = 10.f;
-            const float left = x - halfW, right = x + halfW;
-            const float bottom = baseY + y - halfH, top = baseY + y + halfH;
+            const float left = x - playerHalfWidth, right = x + playerHalfWidth;
+            const float bottom = baseY + y - playerHalfHeight, top = baseY + y + playerHalfHeight;
             for (const auto& h : hazards) {
-                if (h.right < left) continue;
-                if (h.left > right) break;
+                if (h.right <= left) continue;
+                if (h.left >= right) break;
                 if (right > h.left && left < h.right && top > h.bottom && bottom < h.top)
                     return true;
             }
             return false;
         };
         auto keyOf = [](int yq, int vyq, bool grounded) -> uint64_t {
-            const uint64_t a = static_cast<uint32_t>(yq);
-            const uint64_t b = static_cast<uint32_t>(vyq);
-            return (a << 33) ^ (b << 1) ^ static_cast<uint64_t>(grounded);
+            return (static_cast<uint64_t>(static_cast<uint32_t>(yq)) << 33) ^
+                (static_cast<uint64_t>(static_cast<uint32_t>(vyq)) << 1) ^
+                static_cast<uint64_t>(grounded);
         };
 
         std::vector<DPNode> nodes;
         nodes.reserve(100000);
         nodes.push_back({0, 0, true, -1, false});
         std::vector<int> frontier{0};
-        int goal = -1;
-        int reachedTick = 0;
-
+        int goal = -1, reachedTick = 0;
         for (int tick = 1; tick <= horizon && !frontier.empty(); ++tick) {
             const float x = startX + speedPerFrame * static_cast<float>(tick);
             std::vector<int> next;
-            next.reserve(frontier.size() * 2);
             std::unordered_map<uint64_t, int> seen;
-            seen.reserve(frontier.size() * 2);
+            seen.reserve(frontier.size() * 2 + 1);
             for (int parent : frontier) {
                 const DPNode state = nodes[static_cast<size_t>(parent)];
                 for (int action = 0; action <= 1; ++action) {
@@ -360,18 +314,11 @@ class LevelChoicePopup final : public Popup {
                     float y = static_cast<float>(state.yq) * yQuantum;
                     float vy = static_cast<float>(state.vyq) * vyQuantum;
                     bool grounded = state.grounded;
-                    if (action && grounded) {
-                        vy = jumpVelocity;
-                        grounded = false;
-                    }
+                    if (action && grounded) { vy = jumpVelocity; grounded = false; }
                     if (!grounded) {
                         vy -= gravity;
                         y += vy;
-                        if (y <= 0.f && vy < 0.f) {
-                            y = 0.f;
-                            vy = 0.f;
-                            grounded = true;
-                        }
+                        if (y <= 0.f && vy < 0.f) { y = 0.f; vy = 0.f; grounded = true; }
                     }
                     const int yq = static_cast<int>(std::lround(y / yQuantum));
                     const int vyq = static_cast<int>(std::lround(vy / vyQuantum));
@@ -380,7 +327,7 @@ class LevelChoicePopup final : public Popup {
                     const uint64_t key = keyOf(yq, vyq, grounded);
                     if (seen.find(key) != seen.end()) continue;
                     if (nodes.size() >= maxStates) {
-                        setStatus("DP state cap reached; level needs a larger search");
+                        setStatus("Search state limit reached; try a shorter section");
                         return;
                     }
                     const int id = static_cast<int>(nodes.size());
@@ -391,41 +338,32 @@ class LevelChoicePopup final : public Popup {
             }
             frontier = std::move(next);
             reachedTick = tick;
-            if (x >= farthestX + 20.f && !frontier.empty()) {
+            if (x >= farthestX + playerHalfWidth + 2.f && !frontier.empty()) {
                 goal = frontier.front();
                 break;
             }
         }
         if (goal < 0) {
-            solved = false;
-            plannedJumpFrames.clear();
-            solution.clear();
             char message[128];
-            snprintf(message, sizeof(message), "DP found no route (%d ticks, %zu states)",
-                reachedTick, nodes.size());
+            snprintf(message, sizeof(message), "No route after %d ticks (%zu states)", reachedTick, nodes.size());
             setStatus(message);
             return;
         }
-
-        // Backtrack with an explicit tick counter; node parents are always from the previous layer.
         plannedJumpFrames.clear();
-        {
-            int at = goal;
-            int tick = reachedTick;
-            while (at > 0) {
-                const auto& n = nodes[static_cast<size_t>(at)];
-                if (n.jump) plannedJumpFrames.push_back(tick);
-                at = n.parent;
-                --tick;
-            }
+        int at = goal, tick = reachedTick;
+        while (at > 0) {
+            const auto& n = nodes[static_cast<size_t>(at)];
+            if (n.jump) plannedJumpFrames.push_back(tick);
+            at = n.parent;
+            --tick;
         }
         std::reverse(plannedJumpFrames.begin(), plannedJumpFrames.end());
-        solved = !plannedJumpFrames.empty();
+        solved = true;
         solvedLevel = levelName(m_layer);
         solution.assign(1, Cell{0, 0});
-        if (m_replay) m_replay->setEnabled(solved);
+        if (m_replay) m_replay->setEnabled(true);
         char message[128];
-        snprintf(message, sizeof(message), "DP route found: %zu jumps, %zu states",
+        snprintf(message, sizeof(message), "Route found: %zu jumps, %zu states",
             plannedJumpFrames.size(), nodes.size());
         setStatus(message);
     }
@@ -449,8 +387,6 @@ class LevelChoicePopup final : public Popup {
         autoClickClock = 0.f;
         setStatus("Replay started: DP jump plan");
         this->onClose(nullptr);
-        // This popup is opened from the pause menu. Closing the popup alone
-        // leaves the game paused, so resume the underlying PauseLayer too.
         if (m_pauseLayer) m_pauseLayer->onResume(nullptr);
     }
     void addButton(CCMenu* menu, char const* label, CCPoint pos, SEL_MenuHandler callback, bool enabled = true) {
@@ -510,7 +446,6 @@ class $modify(UraniumPauseLayer, PauseLayer) {
         menu->setPosition({CCDirector::get()->getWinSize().width - 65.f, 45.f});
         this->addChild(menu);
     }
-
     void onUranium(CCObject*) {
         auto layer = PlayLayer::get();
         if (auto popup = uranium::LevelChoicePopup::create(layer, this)) popup->show();
@@ -524,15 +459,11 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         uranium::awaitingChoice = false;
         return true;
     }
-
     void update(float dt) {
         PlayLayer::update(dt);
         if (!m_player1 || m_isPaused || m_hasCompletedLevel) return;
-
         if (uranium::replaying) {
             auto* player = m_player1;
-            // Execute the DP's per-frame input plan. Each planned jump is a one-frame
-            // press; release on the following update to avoid holding jump.
             if (uranium::releaseReplayJump) {
                 player->releaseButton(PlayerButton::Jump);
                 uranium::releaseReplayJump = false;
@@ -554,7 +485,6 @@ class $modify(UraniumPlayLayer, PlayLayer) {
             }
             return;
         }
-
         if (!uranium::autoClick17) return;
         uranium::autoClickClock += dt;
         constexpr float interval = 1.f / 17.f;
