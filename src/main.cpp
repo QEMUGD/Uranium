@@ -5,6 +5,8 @@
 #include <cmath>
 #include <queue>
 #include <string>
+#include <unordered_map>
+#include <cstdint>
 #include <vector>
 
 using namespace geode::prelude;
@@ -17,6 +19,9 @@ struct Hitbox { float left, bottom, right, top; };
 static bool solved = false;
 static std::string solvedLevel;
 static std::vector<Cell> solution;
+static std::vector<int> plannedJumpFrames;
+static int replayFrame = 0;
+static float replayFrameAccumulator = 0.f;
 static bool replaying = false;
 static bool awaitingChoice = false;
 static size_t replayNode = 0;
@@ -250,32 +255,178 @@ class LevelChoicePopup final : public Popup {
             setStatus("No active level objects");
             return;
         }
-        // This first executable controller is deliberately limited to normal
-        // cube mode: it reacts to actual hazard objects instead of pretending
-        // a free-space A* path is a sequence of valid game inputs.
-        if (!m_layer->m_player1->isInNormalMode()) {
+        auto* player = m_layer->m_player1;
+        if (!player->isInNormalMode()) {
             solved = false;
             solution.clear();
-            setStatus("Auto replay currently supports cube mode only");
+            plannedJumpFrames.clear();
+            setStatus("DP pathfinder currently supports cube mode only");
             return;
         }
-        size_t hazards = 0;
+
+        // Reachability DP adapted from the approach described in gdsolver
+        // (MIT; see THIRD_PARTY_NOTICES.md): keep reachable (height, vertical
+        // velocity, grounded) states per tick, try both jump/no-jump inputs,
+        // discard collisions, and backtrack a surviving input plan.
+        struct DPNode {
+            int yq;
+            int vyq;
+            bool grounded;
+            int parent;
+            bool jump;
+        };
+        constexpr float yQuantum = 2.f;
+        constexpr float vyQuantum = 0.5f;
+        constexpr int maxTicks = 12000;
+        constexpr size_t maxStates = 450000;
+        const float startX = player->getPositionX();
+        const float baseY = player->getPositionY();
+        const float gravity = std::max(0.05f, static_cast<float>(player->m_gravity) *
+            static_cast<float>(player->m_gravityMod));
+        const float jumpVelocity = static_cast<float>(player->m_yStart);
+        if (!std::isfinite(gravity) || !std::isfinite(jumpVelocity) ||
+            gravity <= 0.f || jumpVelocity <= 0.f) {
+            setStatus("DP failed: invalid cube physics values");
+            return;
+        }
+
+        std::vector<Hitbox> hazards;
+        float farthestX = startX;
         for (unsigned int i = 0; i < m_layer->m_objects->count(); ++i) {
             auto* object = static_cast<GameObject*>(m_layer->m_objects->objectAtIndex(i));
-            if (object && object->m_objectType == GameObjectType::Hazard) ++hazards;
+            if (!object || object->m_objectType != GameObjectType::Hazard) continue;
+            const auto r = object->getObjectRect();
+            if (r.size.width <= 0.f || r.size.height <= 0.f || r.getMaxX() < startX) continue;
+            hazards.push_back({r.getMinX(), r.getMinY(), r.getMaxX(), r.getMaxY()});
+            farthestX = std::max(farthestX, r.getMaxX());
         }
-        if (!hazards) {
-            solved = false;
-            solution.clear();
-            setStatus("No hazard objects found in this level");
+        if (hazards.empty()) {
+            setStatus("DP found no upcoming hazards");
             return;
         }
-        solved = true;
+
+        // Estimate world speed from the most recent live samples; use a conservative
+        // normal-speed fallback if Solve was opened before samples were collected.
+        float speedPerFrame = 5.f;
+        if (hasPreviousPlayerX) {
+            const float dx = startX - previousPlayerX;
+            if (std::isfinite(dx) && dx > 0.1f && dx < 40.f) speedPerFrame = dx;
+        }
+        const int horizon = std::clamp(static_cast<int>(std::ceil((farthestX - startX + 80.f) /
+            speedPerFrame)), 1, maxTicks);
+
+        auto collides = [&](float x, float y) {
+            constexpr float halfW = 10.f;
+            constexpr float halfH = 10.f;
+            const float left = x - halfW, right = x + halfW;
+            const float bottom = baseY + y - halfH, top = baseY + y + halfH;
+            for (const auto& h : hazards) {
+                if (h.right < left) continue;
+                if (h.left > right) break;
+                if (right > h.left && left < h.right && top > h.bottom && bottom < h.top)
+                    return true;
+            }
+            return false;
+        };
+        auto keyOf = [](int yq, int vyq, bool grounded) -> uint64_t {
+            const uint64_t a = static_cast<uint32_t>(yq);
+            const uint64_t b = static_cast<uint32_t>(vyq);
+            return (a << 33) ^ (b << 1) ^ static_cast<uint64_t>(grounded);
+        };
+
+        std::vector<DPNode> nodes;
+        nodes.reserve(100000);
+        nodes.push_back({0, 0, true, -1, false});
+        std::vector<int> frontier{0};
+        int goal = -1;
+        int reachedTick = 0;
+
+        for (int tick = 1; tick <= horizon && !frontier.empty(); ++tick) {
+            const float x = startX + speedPerFrame * static_cast<float>(tick);
+            std::vector<int> next;
+            next.reserve(frontier.size() * 2);
+            std::unordered_map<uint64_t, int> seen;
+            seen.reserve(frontier.size() * 2);
+            for (int parent : frontier) {
+                const DPNode state = nodes[static_cast<size_t>(parent)];
+                for (int action = 0; action <= 1; ++action) {
+                    if (action && !state.grounded) continue;
+                    float y = static_cast<float>(state.yq) * yQuantum;
+                    float vy = static_cast<float>(state.vyq) * vyQuantum;
+                    bool grounded = state.grounded;
+                    if (action && grounded) {
+                        vy = jumpVelocity;
+                        grounded = false;
+                    }
+                    if (!grounded) {
+                        vy -= gravity;
+                        y += vy;
+                        if (y <= 0.f && vy < 0.f) {
+                            y = 0.f;
+                            vy = 0.f;
+                            grounded = true;
+                        }
+                    }
+                    const int yq = static_cast<int>(std::lround(y / yQuantum));
+                    const int vyq = static_cast<int>(std::lround(vy / vyQuantum));
+                    y = static_cast<float>(yq) * yQuantum;
+                    if (collides(x, y)) continue;
+                    const uint64_t key = keyOf(yq, vyq, grounded);
+                    if (seen.find(key) != seen.end()) continue;
+                    if (nodes.size() >= maxStates) {
+                        setStatus("DP state cap reached; level needs a larger search");
+                        return;
+                    }
+                    const int id = static_cast<int>(nodes.size());
+                    nodes.push_back({yq, vyq, grounded, parent, action != 0});
+                    seen.emplace(key, id);
+                    next.push_back(id);
+                }
+            }
+            frontier = std::move(next);
+            reachedTick = tick;
+            if (x >= farthestX + 20.f && !frontier.empty()) {
+                goal = frontier.front();
+                break;
+            }
+        }
+        if (goal < 0) {
+            solved = false;
+            plannedJumpFrames.clear();
+            solution.clear();
+            char message[128];
+            snprintf(message, sizeof(message), "DP found no route (%d ticks, %zu states)",
+                reachedTick, nodes.size());
+            setStatus(message);
+            return;
+        }
+
+        plannedJumpFrames.clear();
+        for (int at = goal; at > 0; at = nodes[static_cast<size_t>(at)].parent) {
+            const auto& n = nodes[static_cast<size_t>(at)];
+            if (n.jump) plannedJumpFrames.push_back(
+                static_cast<int>(std::lround((startX + speedPerFrame * static_cast<float>(reachedTick)) / speedPerFrame)));
+        }
+        // Backtrack with an explicit tick counter; node parents are always from the previous layer.
+        plannedJumpFrames.clear();
+        {
+            int at = goal;
+            int tick = reachedTick;
+            while (at > 0) {
+                const auto& n = nodes[static_cast<size_t>(at)];
+                if (n.jump) plannedJumpFrames.push_back(tick);
+                at = n.parent;
+                --tick;
+            }
+        }
+        std::reverse(plannedJumpFrames.begin(), plannedJumpFrames.end());
+        solved = !plannedJumpFrames.empty();
         solvedLevel = levelName(m_layer);
-        solution.assign(1, Cell{0, 0}); // marks this level as prepared for reactive replay
-        if (m_replay) m_replay->setEnabled(true);
+        solution.assign(1, Cell{0, 0});
+        if (m_replay) m_replay->setEnabled(solved);
         char message[128];
-        snprintf(message, sizeof(message), "Cube solver armed: %zu hazards", hazards);
+        snprintf(message, sizeof(message), "DP route found: %zu jumps, %zu states",
+            plannedJumpFrames.size(), nodes.size());
         setStatus(message);
     }
     void onReplay(CCObject*) {
@@ -290,11 +441,13 @@ class LevelChoicePopup final : public Popup {
         replaying = true;
         replayClock = 0.f;
         replayNode = 0;
+        replayFrame = 0;
+        replayFrameAccumulator = 0.f;
         lastReplayHazard = nullptr;
         releaseReplayJump = false;
         replayCooldown = 0.f;
         autoClickClock = 0.f;
-        setStatus("Replay started: reactive cube controller");
+        setStatus("Replay started: DP jump plan");
         this->onClose(nullptr);
         // This popup is opened from the pause menu. Closing the popup alone
         // leaves the game paused, so resume the underlying PauseLayer too.
@@ -378,72 +531,27 @@ class $modify(UraniumPlayLayer, PlayLayer) {
 
         if (uranium::replaying) {
             auto* player = m_player1;
-            uranium::replayCooldown = std::max(0.f, uranium::replayCooldown - dt);
+            // Execute the DP's per-frame input plan. Each planned jump is a one-frame
+            // press; release on the following update to avoid holding jump.
             if (uranium::releaseReplayJump) {
                 player->releaseButton(PlayerButton::Jump);
                 uranium::releaseReplayJump = false;
             }
-
-            // Predict a jump arc from the live cube's jump-start velocity and
-            // gravity, then choose a takeoff delay that clears the upcoming hitbox.
-            if (player->isInNormalMode() && player->m_isOnGround &&
-                uranium::replayCooldown <= 0.f && m_objects) {
-                GameObject* nearest = nullptr;
-                float nearestDistance = 1.0e9f;
-                const float playerX = player->getPositionX();
-                for (unsigned int i = 0; i < m_objects->count(); ++i) {
-                    auto* object = static_cast<GameObject*>(m_objects->objectAtIndex(i));
-                    if (!object || object->m_objectType != GameObjectType::Hazard) continue;
-                    const auto rect = object->getObjectRect();
-                    const float distance = rect.getMinX() - playerX;
-                    if (distance > 0.f && distance < nearestDistance) {
-                        nearestDistance = distance;
-                        nearest = object;
-                    }
+            uranium::replayFrameAccumulator += std::max(0.f, dt) * 60.f;
+            int steps = static_cast<int>(uranium::replayFrameAccumulator);
+            uranium::replayFrameAccumulator -= static_cast<float>(steps);
+            for (int i = 0; i < steps; ++i, ++uranium::replayFrame) {
+                if (uranium::replayNode < uranium::plannedJumpFrames.size() &&
+                    uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame) {
+                    player->pushButton(PlayerButton::Jump);
+                    uranium::releaseReplayJump = true;
+                    ++uranium::replayNode;
                 }
-
-                float speedPerFrame = 5.f;
-                if (uranium::hasPreviousPlayerX && dt > 0.0001f) {
-                    const float measured = (playerX - uranium::previousPlayerX) / (dt * 60.f);
-                    if (std::isfinite(measured) && measured > 0.1f && measured < 40.f)
-                        speedPerFrame = measured;
-                }
-                uranium::previousPlayerX = playerX;
-                uranium::hasPreviousPlayerX = true;
-
-                if (nearest && nearest != uranium::lastReplayHazard) {
-                    const int delayFrames = uranium::predictJumpDelay(player, nearest, speedPerFrame);
-                    // Recompute from the live position every update. A positive delay
-                    // means "not yet"; jumping when distance <= speed * delay was
-                    // inverted and caused the controller to jump too late.
-                    bool shouldJump = (delayFrames == 0);
-
-                    // If the approximate trajectory cannot classify this object,
-                    // retain a simple last-resort cube trigger rather than silently
-                    // leaving replay armed without ever pressing Jump.
-                    if (delayFrames < 0) {
-                        const float fallbackDistance = std::max(35.f, speedPerFrame * 8.f);
-                        shouldJump = nearestDistance <= fallbackDistance;
-                        if (shouldJump)
-                            log::warn("Uranium: using fallback jump for unclassified hazard");
-                    }
-
-                    if (shouldJump) {
-                        player->pushButton(PlayerButton::Jump);
-                        uranium::releaseReplayJump = true;
-                        uranium::lastReplayHazard = nearest;
-                        uranium::replayCooldown = .08f;
-                        log::info("Uranium: jump input sent (hazard distance {:.1f}, prediction {})",
-                            nearestDistance, delayFrames);
-                    }
-                }
-            } else {
-                uranium::previousPlayerX = player->getPositionX();
-                uranium::hasPreviousPlayerX = true;
             }
-            // Stop cleanly after completion; if the player dies, leave the
-            // controller armed so it can continue after the game's respawn.
-            if (m_hasCompletedLevel) uranium::replaying = false;
+            if (m_hasCompletedLevel) {
+                uranium::replaying = false;
+                player->releaseButton(PlayerButton::Jump);
+            }
             return;
         }
 
