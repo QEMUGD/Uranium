@@ -1,0 +1,13 @@
+{
+  "geode": "5.11.2",
+  "gd": {
+    "win": "2.2081",
+    "android": "2.2081"
+  },
+  "id": "uranium.pathfinder",
+  "name": "Uranium",
+  "version": "v0.1.0",
+  "developer": "loftplay",
+  "description": "Geometry Dash pathfinding and macro research mod with level mapping, macro replay, and retry workflow.",
+  "dependencies": {}
+}
