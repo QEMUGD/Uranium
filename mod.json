@@ -8,6 +8,6 @@
   "name": "Uranium",
   "version": "v0.1.0",
   "developer": "QEMUGD",
-  "description": "Clean-room macro tools and experimental Geometry Dash pathfinding research.",
+  "description": "Clean-room Geometry Dash pathfinder prototype with collision-map search and level-entry choices.",
   "dependencies": {}
 }
