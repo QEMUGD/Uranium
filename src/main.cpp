@@ -1,5 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/LevelInfoLayer.hpp>
 #include <algorithm>
 #include <cmath>
 #include <queue>
@@ -213,28 +214,75 @@ public:
 };
 } // namespace uranium
 
+namespace uranium {
+static bool bypassLevelInfoHook = false;
+enum class EntryChoice { Normal, Solve, Replay };
+static EntryChoice entryChoice = EntryChoice::Normal;
+
+class LaunchChoicePopup final : public Popup {
+    LevelInfoLayer* m_info = nullptr;
+
+    void launch(EntryChoice choice) {
+        if (!m_info) return;
+        entryChoice = choice;
+        bypassLevelInfoHook = true;
+        m_info->onPlay(nullptr);
+        bypassLevelInfoHook = false;
+        this->onClose(nullptr);
+    }
+    void onNormal(CCObject*) { launch(EntryChoice::Normal); }
+    void onSolve(CCObject*) { launch(EntryChoice::Solve); }
+    void onReplay(CCObject*) { launch(EntryChoice::Replay); }
+
+    void addChoice(CCMenu* menu, char const* label, CCPoint pos, SEL_MenuHandler callback) {
+        auto sprite = ButtonSprite::create(label, "bigFont.fnt", "GJ_button_01.png", .7f);
+        auto item = CCMenuItemSpriteExtra::create(sprite, this, callback);
+        item->setPosition(pos);
+        menu->addChild(item);
+    }
+
+    bool init(LevelInfoLayer* info) {
+        if (!Popup::init(340.f, 220.f)) return false;
+        m_info = info;
+        setTitle("Uranium Pathfinder");
+        auto menu = CCMenu::create();
+        menu->setPosition(CCPointZero);
+        addChoice(menu, "Solve", {75.f, 105.f}, menu_selector(LaunchChoicePopup::onSolve));
+        addChoice(menu, "Replay", {170.f, 105.f}, menu_selector(LaunchChoicePopup::onReplay));
+        addChoice(menu, "Normal", {265.f, 105.f}, menu_selector(LaunchChoicePopup::onNormal));
+        addChild(menu);
+        auto status = CCLabelBMFont::create("Choose before the level launches", "chatFont.fnt");
+        status->setScale(.62f);
+        status->setPosition({170.f, 60.f});
+        addChild(status);
+        return true;
+    }
+public:
+    static LaunchChoicePopup* create(LevelInfoLayer* info) {
+        auto p = new LaunchChoicePopup();
+        if (p && p->init(info)) { p->autorelease(); return p; }
+        CC_SAFE_DELETE(p);
+        return nullptr;
+    }
+};
+} // namespace uranium
+
+class $modify(UraniumLevelInfoLayer, LevelInfoLayer) {
+    void onPlay(CCObject* sender) {
+        if (uranium::bypassLevelInfoHook) {
+            LevelInfoLayer::onPlay(sender);
+            return;
+        }
+        if (auto popup = uranium::LaunchChoicePopup::create(this)) popup->show();
+        else LevelInfoLayer::onPlay(sender);
+    }
+};
+
 class $modify(UraniumPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
-        uranium::replaying = false;
-        auto current = uranium::levelName(this);
-        // Show the choice screen on entry, before the player begins actively playing.
-        // The level scene is initialized underneath the modal popup.
-        if (current != "unknown") {
-            uranium::awaitingChoice = true;
-            if (auto popup = uranium::LevelChoicePopup::create(this)) {
-                popup->show();
-            } else {
-                uranium::awaitingChoice = false;
-            }
-        }
+        uranium::replaying = uranium::entryChoice == uranium::EntryChoice::Replay;
+        uranium::awaitingChoice = false;
         return true;
-    }
-
-    void update(float dt) {
-        // Freeze PlayLayer simulation while the entry-choice popup is open.
-        // The popup remains interactive because it is managed by the scene/UI.
-        if (uranium::awaitingChoice) return;
-        PlayLayer::update(dt);
     }
 };
