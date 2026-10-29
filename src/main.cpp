@@ -463,27 +463,31 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         return true;
     }
     void update(float dt) {
-        // Apply replay input BEFORE the game update, avoiding a one-frame-late jump.
+        // Apply replay input before the game update. Advance the 60 Hz plan by
+        // elapsed time instead of one tick per rendered frame; the old throttle
+        // silently discarded time and made replay drift or miss jump frames.
         if (m_player1 && !m_isPaused && !m_hasCompletedLevel && uranium::replaying) {
             auto* player = m_player1;
             if (uranium::releaseReplayJump) {
                 player->releaseButton(PlayerButton::Jump);
                 uranium::releaseReplayJump = false;
             }
-            uranium::replayFrameAccumulator = std::min(
-                1.99f, uranium::replayFrameAccumulator + std::max(0.f, dt) * 60.f);
-            // One planned physics tick per rendered update keeps slow phones from
-            // skipping input events. Excess time is intentionally discarded.
-            const int steps = uranium::replayFrameAccumulator >= 1.f ? 1 : 0;
-            if (steps == 1) {
+            uranium::replayFrameAccumulator += std::max(0.f, dt) * 60.f;
+            uranium::replayFrameAccumulator = std::min(uranium::replayFrameAccumulator, 8.f);
+            bool jumpThisUpdate = false;
+            int ticks = 0;
+            while (uranium::replayFrameAccumulator >= 1.f && ticks++ < 8) {
                 uranium::replayFrameAccumulator -= 1.f;
                 ++uranium::replayFrame;
                 if (uranium::replayNode < uranium::plannedJumpFrames.size() &&
-                    uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame) {
-                    player->pushButton(PlayerButton::Jump);
-                    uranium::releaseReplayJump = true;
+                    uranium::plannedJumpFrames[uranium::replayNode] <= uranium::replayFrame) {
+                    jumpThisUpdate = true;
                     ++uranium::replayNode;
                 }
+            }
+            if (jumpThisUpdate) {
+                player->pushButton(PlayerButton::Jump);
+                uranium::releaseReplayJump = true;
             }
         }
 
