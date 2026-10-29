@@ -34,7 +34,9 @@ static std::vector<Hitbox> collectHitboxes(PlayLayer* layer, float& minX, float&
     maxX = minX + 500.f;
     minY = 0.f;
     maxY = 360.f;
-    for (auto* object : layer->m_objects) {
+    if (!layer->m_objects) return boxes;
+    for (unsigned int i = 0; i < layer->m_objects->count(); ++i) {
+        auto* object = static_cast<GameObject*>(layer->m_objects->objectAtIndex(i));
         if (!object || !object->m_isCollidable) continue;
         auto r = object->getObjectRect();
         if (r.size.width <= 0.f || r.size.height <= 0.f) continue;
