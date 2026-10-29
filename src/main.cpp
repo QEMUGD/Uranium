@@ -30,6 +30,70 @@ static int targetTPS = 240;
 static bool tpsBypassEnabled = false;
 static constexpr float CELL_SIZE = 12.f;
 static constexpr float PLAYER_MARGIN = 12.f;
+static float previousPlayerX = 0.f;
+static bool hasPreviousPlayerX = false;
+
+// Predict a normal-cube jump using the live player's jump-start velocity and
+// gravity. The simulation uses quarter-frame steps like GD's fixed-step loop.
+// Returns the number of frames to wait before jumping, or -1 if no safe arc
+// was found for this hazard.
+static int predictJumpDelay(PlayerObject* player, GameObject* hazard, float speedPerFrame) {
+    if (!player || !hazard || speedPerFrame <= 0.01f) return -1;
+    const auto obstacle = hazard->getObjectRect();
+    const float px = player->getPositionX();
+    const float py = player->getPositionY();
+    const float playerHalfWidth = 10.f;
+    const float playerHalfHeight = 10.f;
+    const float gravity = std::max(0.05f, static_cast<float>(player->m_gravity) *
+        static_cast<float>(player->m_gravityMod));
+    const float jumpVelocity = static_cast<float>(player->m_yStart);
+    if (!std::isfinite(gravity) || !std::isfinite(jumpVelocity) ||
+        gravity <= 0.f || jumpVelocity <= 0.f) return -1;
+
+    // Try increasingly later takeoff points. A candidate is safe only if the
+    // predicted player box avoids the hazard for the whole horizontal crossing.
+    constexpr float substep = 0.25f; // quarter of a 60 Hz physics frame
+    constexpr int maxDelayFrames = 48;
+    constexpr int maxFlightFrames = 100;
+    for (int delay = 0; delay <= maxDelayFrames; ++delay) {
+        float y = 0.f;
+        float vy = 0.f;
+        bool jumping = false;
+        bool safe = true;
+        bool crossed = false;
+        for (int step = 0; step < maxFlightFrames * 4; ++step) {
+            const float frame = static_cast<float>(step) * substep;
+            if (!jumping && frame >= static_cast<float>(delay)) {
+                jumping = true;
+                vy = jumpVelocity;
+            }
+            if (jumping) {
+                vy -= gravity * substep;
+                y += vy * substep;
+                if (y <= 0.f && frame > static_cast<float>(delay) + 1.f) {
+                    y = 0.f;
+                    vy = 0.f;
+                    // Continue checking horizontal travel after landing.
+                }
+            }
+            const float x = px + speedPerFrame * frame;
+            const float left = x - playerHalfWidth;
+            const float right = x + playerHalfWidth;
+            const float bottom = py + y - playerHalfHeight;
+            const float top = py + y + playerHalfHeight;
+            if (right >= obstacle.getMinX() && left <= obstacle.getMaxX()) {
+                if (top > obstacle.getMinY() && bottom < obstacle.getMaxY()) {
+                    safe = false;
+                    break;
+                }
+                if (left > obstacle.getMaxX()) { crossed = true; break; }
+            }
+            if (left > obstacle.getMaxX()) { crossed = true; break; }
+        }
+        if (safe && crossed) return delay;
+    }
+    return -1;
+}
 
 static std::string levelName(PlayLayer* layer) {
     if (!layer || !layer->m_level) return "unknown";
@@ -320,40 +384,55 @@ class $modify(UraniumPlayLayer, PlayLayer) {
                 uranium::releaseReplayJump = false;
             }
 
-            // Reactive cube controller: choose the nearest upcoming hazard and
-            // jump shortly before its hitbox reaches the player's horizontal
-            // position. The game itself supplies collision/physics each frame.
+            // Predict a jump arc from the live cube's jump-start velocity and
+            // gravity, then choose a takeoff delay that clears the upcoming hitbox.
             if (player->isInNormalMode() && player->m_isOnGround &&
                 uranium::replayCooldown <= 0.f && m_objects) {
                 GameObject* nearest = nullptr;
                 float nearestDistance = 1.0e9f;
                 const float playerX = player->getPositionX();
-                // Pick the nearest spike-like hazard. Use the player's real
-                // horizontal speed to estimate time-to-contact, not a fixed
-                // 18-48 unit window that can be skipped at higher game speed.
                 for (unsigned int i = 0; i < m_objects->count(); ++i) {
                     auto* object = static_cast<GameObject*>(m_objects->objectAtIndex(i));
                     if (!object || object->m_objectType != GameObjectType::Hazard) continue;
-                    auto rect = object->getObjectRect();
+                    const auto rect = object->getObjectRect();
                     const float distance = rect.getMinX() - playerX;
                     if (distance > 0.f && distance < nearestDistance) {
                         nearestDistance = distance;
                         nearest = object;
                     }
                 }
-                // Conservative trigger distance for a normal-speed cube.
-                // Avoid relying on a velocity field that differs across SDK builds.
-                // This remains an approximation; speed portals need a proper physics model.
-                constexpr float triggerDistance = 60.f;
-                if (nearest && nearest != uranium::lastReplayHazard &&
-                    nearestDistance <= triggerDistance) {
-                    player->pushButton(PlayerButton::Jump);
-                    uranium::releaseReplayJump = true;
-                    uranium::lastReplayHazard = nearest;
-                    // Prevent retriggering while airborne, but permit the next
-                    // spike shortly after landing.
-                    uranium::replayCooldown = .04f;
+
+                float speedPerFrame = 5.f;
+                if (uranium::hasPreviousPlayerX && dt > 0.0001f) {
+                    const float measured = (playerX - uranium::previousPlayerX) / (dt * 60.f);
+                    if (std::isfinite(measured) && measured > 0.1f && measured < 40.f)
+                        speedPerFrame = measured;
                 }
+                uranium::previousPlayerX = playerX;
+                uranium::hasPreviousPlayerX = true;
+
+                if (nearest && nearest != uranium::lastReplayHazard) {
+                    const int delayFrames = uranium::predictJumpDelay(player, nearest, speedPerFrame);
+                    if (delayFrames == 0) {
+                        player->pushButton(PlayerButton::Jump);
+                        uranium::releaseReplayJump = true;
+                        uranium::lastReplayHazard = nearest;
+                        uranium::replayCooldown = .04f;
+                    } else if (delayFrames > 0) {
+                        // Wait until the predicted takeoff point. Re-evaluate each
+                        // frame so speed changes or a moving player do not stale the plan.
+                        const float targetDistance = speedPerFrame * static_cast<float>(delayFrames);
+                        if (nearestDistance <= targetDistance + speedPerFrame * 0.5f) {
+                            player->pushButton(PlayerButton::Jump);
+                            uranium::releaseReplayJump = true;
+                            uranium::lastReplayHazard = nearest;
+                            uranium::replayCooldown = .04f;
+                        }
+                    }
+                }
+            } else {
+                uranium::previousPlayerX = player->getPositionX();
+                uranium::hasPreviousPlayerX = true;
             }
             // Stop cleanly after completion; if the player dies, leave the
             // controller armed so it can continue after the game's respawn.
