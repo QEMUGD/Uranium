@@ -206,7 +206,7 @@ class $modify(UraniumPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         if(!PlayLayer::init(level,useReplay,dontCreateObjects)) return false;
         uranium::recording=false; uranium::playing=false; uranium::recordClock=0.0;
-        uranium::lastLevel=(level && level->m_levelName.length()) ? level->m_levelName : "level";
+        uranium::lastLevel = level ? std::string(level->m_levelName.c_str()) : "level";
         uranium::observedHitboxes.clear(); return true;
     }
     void update(float dt) {
