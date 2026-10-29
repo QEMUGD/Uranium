@@ -328,6 +328,9 @@ class $modify(UraniumPlayLayer, PlayLayer) {
                 GameObject* nearest = nullptr;
                 float nearestDistance = 1.0e9f;
                 const float playerX = player->getPositionX();
+                // Pick the nearest spike-like hazard. Use the player's real
+                // horizontal speed to estimate time-to-contact, not a fixed
+                // 18-48 unit window that can be skipped at higher game speed.
                 for (unsigned int i = 0; i < m_objects->count(); ++i) {
                     auto* object = static_cast<GameObject*>(m_objects->objectAtIndex(i));
                     if (!object || object->m_objectType != GameObjectType::Hazard) continue;
@@ -338,12 +341,19 @@ class $modify(UraniumPlayLayer, PlayLayer) {
                         nearest = object;
                     }
                 }
+                float speed = std::abs(static_cast<float>(player->m_xVelocity));
+                if (speed < 1.f) speed = 1.f;
+                // Start the jump about 0.20 seconds before the hazard arrives.
+                // A spike's collision box is narrower than its visible sprite.
+                const float triggerDistance = std::clamp(speed * .20f, 22.f, 105.f);
                 if (nearest && nearest != uranium::lastReplayHazard &&
-                    nearestDistance <= 48.f && nearestDistance >= 18.f) {
+                    nearestDistance <= triggerDistance) {
                     player->pushButton(PlayerButton::Jump);
                     uranium::releaseReplayJump = true;
                     uranium::lastReplayHazard = nearest;
-                    uranium::replayCooldown = uranium::autoClick17 ? (1.f / 17.f) : .08f;
+                    // Prevent retriggering while airborne, but permit the next
+                    // spike shortly after landing.
+                    uranium::replayCooldown = .04f;
                 }
             }
             // Stop cleanly after completion; if the player dies, leave the
