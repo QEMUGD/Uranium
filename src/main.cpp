@@ -470,15 +470,13 @@ class $modify(UraniumPlayLayer, PlayLayer) {
                 player->releaseButton(PlayerButton::Jump);
                 uranium::releaseReplayJump = false;
             }
-            uranium::replayFrameAccumulator += std::max(0.f, dt) * 60.f;
-            int steps = static_cast<int>(uranium::replayFrameAccumulator);
-            uranium::replayFrameAccumulator -= static_cast<float>(steps);
-            // On slow mobile rendering, throttle replay rather than skipping a planned tick.
-            if (steps > 1) {
-                uranium::replayFrameAccumulator += static_cast<float>(steps - 1);
-                steps = 1;
-            }
+            uranium::replayFrameAccumulator = std::min(
+                1.99f, uranium::replayFrameAccumulator + std::max(0.f, dt) * 60.f);
+            // One planned physics tick per rendered update keeps slow phones from
+            // skipping input events. Excess time is intentionally discarded.
+            const int steps = uranium::replayFrameAccumulator >= 1.f ? 1 : 0;
             if (steps == 1) {
+                uranium::replayFrameAccumulator -= 1.f;
                 ++uranium::replayFrame;
                 if (uranium::replayNode < uranium::plannedJumpFrames.size() &&
                     uranium::plannedJumpFrames[uranium::replayNode] == uranium::replayFrame) {
