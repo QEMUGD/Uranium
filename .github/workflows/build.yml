@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Build Geode mod for Windows
         uses: geode-sdk/build-geode-mod@main
         with:
@@ -33,6 +35,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Build Geode mod for Android 32-bit
         uses: geode-sdk/build-geode-mod@main
         with:
@@ -46,6 +50,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Build Geode mod for Android 64-bit
         uses: geode-sdk/build-geode-mod@main
         with:
