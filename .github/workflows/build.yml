@@ -23,11 +23,18 @@ jobs:
         with:
           submodules: recursive
       - name: Build Geode mod for Windows
+        id: build
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: latest
           target: Win64
           combine: true
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: uranium-windows
+          path: ${{ steps.build.outputs.build-output }}
+          if-no-files-found: error
 
   build-android32:
     name: Build Android 32-bit Geode mod
@@ -38,11 +45,18 @@ jobs:
         with:
           submodules: recursive
       - name: Build Geode mod for Android 32-bit
+        id: build
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: latest
           target: Android32
           combine: true
+      - name: Upload Android 32-bit package
+        uses: actions/upload-artifact@v4
+        with:
+          name: uranium-android32
+          path: ${{ steps.build.outputs.build-output }}
+          if-no-files-found: error
 
   build-android64:
     name: Build Android 64-bit Geode mod
@@ -53,8 +67,15 @@ jobs:
         with:
           submodules: recursive
       - name: Build Geode mod for Android 64-bit
+        id: build
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: latest
           target: Android64
           combine: true
+      - name: Upload Android 64-bit package
+        uses: actions/upload-artifact@v4
+        with:
+          name: uranium-android64
+          path: ${{ steps.build.outputs.build-output }}
+          if-no-files-found: error
