@@ -30,6 +30,9 @@ static bool autoClick17 = false;
 static float autoClickClock = 0.f;
 static GameObject* lastReplayHazard = nullptr;
 static bool releaseReplayJump = false;
+// Presses whose planned tick passed during a slow rendered frame are queued, not merged
+// into one click. GD only observes a button edge once per PlayLayer update.
+static int replayPendingPresses = 0;
 static float replayCooldown = 0.f;
 static int targetTPS = 240;
 static bool tpsBypassEnabled = false;
@@ -222,6 +225,7 @@ class LevelChoicePopup final : public Popup {
         replaying = false;
         lastReplayHazard = nullptr;
         releaseReplayJump = false;
+        replayPendingPresses = 0;
         awaitingChoice = false;
         this->onClose(nullptr);
     }
@@ -236,7 +240,7 @@ class LevelChoicePopup final : public Popup {
         }
         auto* player = m_layer->m_player1;
         if (!player->isInNormalMode()) {
-            setStatus("Pathfinder currently supports cube mode only");
+            setStatus("This solver build is cube-only; other modes need gdsolver state export");
             return;
         }
 
@@ -376,7 +380,7 @@ class LevelChoicePopup final : public Popup {
             return;
         }
         if (!m_layer || !m_layer->m_player1 || !m_layer->m_player1->isInNormalMode()) {
-            setStatus("Replay supports normal cube mode only");
+            setStatus("No compatible cube route is available for this mode");
             return;
         }
         replaying = true;
@@ -386,6 +390,7 @@ class LevelChoicePopup final : public Popup {
         replayFrameAccumulator = 0.f;
         lastReplayHazard = nullptr;
         releaseReplayJump = false;
+        replayPendingPresses = 0;
         replayCooldown = 0.f;
         autoClickClock = 0.f;
         setStatus("Replay started: DP jump plan");
@@ -401,29 +406,33 @@ class LevelChoicePopup final : public Popup {
         if (std::string(label) == "Replay") m_replay = item;
     }
     bool init(PlayLayer* layer, PauseLayer* pauseLayer) {
-        if (!Popup::init(360.f, 260.f)) return false;
+        if (!Popup::init(400.f, 300.f)) return false;
         m_layer = layer;
         m_pauseLayer = pauseLayer;
         setTitle("Uranium Pathfinder");
         auto menu = CCMenu::create();
         menu->setPosition(CCPointZero);
-        addButton(menu, "Replay", {65.f, 112.f}, menu_selector(LevelChoicePopup::onReplay),
+        addButton(menu, "Replay", {78.f, 126.f}, menu_selector(LevelChoicePopup::onReplay),
                   solved && solvedLevel == levelName(layer));
-        addButton(menu, "Solve", {180.f, 112.f}, menu_selector(LevelChoicePopup::onSolve));
-        addButton(menu, "Normal", {295.f, 112.f}, menu_selector(LevelChoicePopup::onNormal));
-        addButton(menu, "17 CPS Cap", {75.f, 62.f}, menu_selector(LevelChoicePopup::onAutoClick));
-        addButton(menu, "TPS -", {180.f, 62.f}, menu_selector(LevelChoicePopup::onTPSDown));
-        addButton(menu, "TPS +", {285.f, 62.f}, menu_selector(LevelChoicePopup::onTPSUp));
+        addButton(menu, "Solve", {200.f, 126.f}, menu_selector(LevelChoicePopup::onSolve));
+        addButton(menu, "Continue", {322.f, 126.f}, menu_selector(LevelChoicePopup::onNormal));
+        addButton(menu, "17 CPS", {92.f, 72.f}, menu_selector(LevelChoicePopup::onAutoClick));
+        addButton(menu, "TPS -", {200.f, 72.f}, menu_selector(LevelChoicePopup::onTPSDown));
+        addButton(menu, "TPS +", {308.f, 72.f}, menu_selector(LevelChoicePopup::onTPSUp));
         addChild(menu);
         m_status = CCLabelBMFont::create("Choose how to enter this level", "chatFont.fnt");
-        m_status->setScale(.42f);
-        m_status->setPosition({180.f, 35.f});
+        m_status->setScale(.46f);
+        m_status->setPosition({200.f, 38.f});
         addChild(m_status);
         char tpsText[80]; snprintf(tpsText, sizeof(tpsText), "TPS target: %d (bypass not active)", targetTPS);
         m_tpsStatus = CCLabelBMFont::create(tpsText, "chatFont.fnt");
-        m_tpsStatus->setScale(.40f);
-        m_tpsStatus->setPosition({180.f, 14.f});
+        m_tpsStatus->setScale(.43f);
+        m_tpsStatus->setPosition({200.f, 17.f});
         addChild(m_tpsStatus);
+        // Scale the complete popup to fit both landscape phones and desktop windows.
+        auto win = CCDirector::get()->getWinSize();
+        float fit = std::min((win.width - 24.f) / 400.f, (win.height - 24.f) / 300.f);
+        this->setScale(std::clamp(fit, 0.68f, 1.f));
         return true;
     }
 public:
@@ -463,30 +472,33 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         return true;
     }
     void update(float dt) {
-        // Apply replay input before the game update. Advance the 60 Hz plan by
-        // elapsed time instead of one tick per rendered frame; the old throttle
-        // silently discarded time and made replay drift or miss jump frames.
+        // Replay input is edge-triggered. Advance the plan clock from elapsed time,
+        // but queue every due press and emit at most one press edge per game update.
+        // The previous implementation collapsed several due jumps into one press.
         if (m_player1 && !m_isPaused && !m_hasCompletedLevel && uranium::replaying) {
             auto* player = m_player1;
             if (uranium::releaseReplayJump) {
                 player->releaseButton(PlayerButton::Jump);
                 uranium::releaseReplayJump = false;
             }
-            uranium::replayFrameAccumulator += std::max(0.f, dt) * 60.f;
-            uranium::replayFrameAccumulator = std::min(uranium::replayFrameAccumulator, 8.f);
-            bool jumpThisUpdate = false;
+
+            const float safeDt = std::clamp(dt, 0.f, 0.4f);
+            uranium::replayFrameAccumulator += safeDt * 60.f;
+            uranium::replayFrameAccumulator = std::min(uranium::replayFrameAccumulator, 24.f);
             int ticks = 0;
-            while (uranium::replayFrameAccumulator >= 1.f && ticks++ < 8) {
+            while (uranium::replayFrameAccumulator >= 1.f && ticks++ < 24) {
                 uranium::replayFrameAccumulator -= 1.f;
                 ++uranium::replayFrame;
-                if (uranium::replayNode < uranium::plannedJumpFrames.size() &&
-                    uranium::plannedJumpFrames[uranium::replayNode] <= uranium::replayFrame) {
-                    jumpThisUpdate = true;
+                while (uranium::replayNode < uranium::plannedJumpFrames.size() &&
+                       uranium::plannedJumpFrames[uranium::replayNode] <= uranium::replayFrame) {
+                    ++uranium::replayPendingPresses;
                     ++uranium::replayNode;
                 }
             }
-            if (jumpThisUpdate) {
+
+            if (!uranium::releaseReplayJump && uranium::replayPendingPresses > 0) {
                 player->pushButton(PlayerButton::Jump);
+                --uranium::replayPendingPresses;
                 uranium::releaseReplayJump = true;
             }
         }
@@ -496,6 +508,8 @@ class $modify(UraniumPlayLayer, PlayLayer) {
         if (!m_player1 || m_isPaused || m_hasCompletedLevel) {
             if (m_hasCompletedLevel) {
                 uranium::replaying = false;
+                uranium::replayPendingPresses = 0;
+                uranium::releaseReplayJump = false;
                 if (m_player1) m_player1->releaseButton(PlayerButton::Jump);
             }
             return;
