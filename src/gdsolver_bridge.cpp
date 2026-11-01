@@ -214,9 +214,12 @@ SolveResult executeSolve(SolveJob job) {
         return result;
     }
 
+    result.level = job.level;
     const int rc = dpcore::solveInProcess(job.csv, job.args);
     const dpcore::SolveOutcome outcome = dpcore::outcome();
-    result.complete = outcome.verdict == dpcore::OutcomeSolved;
+    // OutcomeSolved can also mean merely "survived the requested horizon".
+    // Only accept a route when the model reached GD's end portal.
+    result.complete = outcome.verdict == dpcore::OutcomeSolved && !outcome.horizonCut;
     result.stopTick = outcome.deepT;
 
     std::ifstream plan(job.planPath);
@@ -245,11 +248,13 @@ SolveResult executeSolve(SolveJob job) {
 
     // A partial route is useful diagnostic progress but is not safe to offer as
     // an executable replay. Keep Replay locked unless gdsolver proves a clear.
-    result.hasPlan = outcome.verdict == dpcore::OutcomeSolved;
+    result.hasPlan = result.complete;
     if (!result.hasPlan || (rc != 0 && rc != 1)) {
         result.hasPlan = false;
         if (!outcome.unsupported.empty()) {
             result.message = "gdsolver refused the level: " + outcome.unsupported;
+        } else if (outcome.verdict == dpcore::OutcomeSolved && outcome.horizonCut) {
+            result.message = "No proven clear: solver reached its search horizon without reaching the end portal.";
         } else {
             result.message = "gdsolver found no route (solver code " + std::to_string(rc) + ").";
         }
