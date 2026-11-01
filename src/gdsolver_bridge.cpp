@@ -20,16 +20,21 @@ std::string dataDirectory() {
 }
 } // namespace uranium::gdsolver
 
-// gdsolver's exporter writes diagnostic notes through this narrow callback.
-// Keep them in the Geode log; it does not touch gameplay or the UI.
+// gdsolver's live exporter is authored as part of namespace p1. It relies on
+// the same shared declarations as the upstream mod: InputCmd and raw GD offsets.
+#include "../third_party/gdsolver/src/mod/plan_edges.hpp"
+#include "../third_party/gdsolver/src/mod/gd_offsets.hpp"
+
+#define DATA_DIR (uranium::gdsolver::dataDirectory())
+namespace p1 {
 inline void writeResult(const std::string& line) {
     log::info("[Uranium/gdsolver] {}", line);
 }
-
-#define DATA_DIR (uranium::gdsolver::dataDirectory())
 #include "../third_party/gdsolver/src/solver/solver.hpp"
-#include "../third_party/gdsolver/dp/src/dpcore.hpp"
+} // namespace p1
 #undef DATA_DIR
+
+#include "../third_party/gdsolver/dp/src/dpcore.hpp"
 
 namespace uranium::gdsolver {
 namespace {
@@ -59,13 +64,13 @@ std::string startState(GJBaseGameLayer* layer) {
     // while paused, so the button is not held at the anchor.
     std::ostringstream out;
     out << std::setprecision(9)
-        << 0 << ','                                      // anchor tick
+        << 0 << ','
         << p1->getPositionX() << ','
         << p1->getPositionY() << ','
         << static_cast<float>(p1->m_yVelocity) << ','
         << mode1 << ','
         << groundedState(p1, mode1) << ','
-        << 0 << ','                                      // held
+        << 0 << ','
         << (p1->m_isUpsideDown ? 1 : 0) << ','
         << mini1 << ','
         << (dual ? 1 : 0) << ','
@@ -74,15 +79,15 @@ std::string startState(GJBaseGameLayer* layer) {
         << (dual && p2->m_isUpsideDown ? 1 : 0) << ','
         << (dual ? groundedState(p2, mode2) : 0) << ','
         << p1->m_playerSpeed << ','
-        << 0 << ','                                      // robot hover budget
+        << 0 << ','
         << (p1->m_isDashing ? 1 : 0) << ','
-        << 0 << ','                                      // dash slope (not exposed by 2.2081 bindings)
-        << -1 << ','                                     // snapped object uid
-        << 0 << ','                                      // snap distance
-        << 0 << ','                                      // gameplay rotation frame
-        << 0 << ','                                      // reverse carry
+        << 0 << ','
+        << -1 << ','
+        << 0 << ','
+        << 0 << ','
+        << 0 << ','
         << p1->getRotation() << ','
-        << 0 << ','                                      // rotation direction
+        << 0 << ','
         << (p1->m_maybeIsBoosted ? 1 : 0) << ','
         << mode2 << ','
         << mini2;
@@ -148,11 +153,10 @@ SolveJob prepareSolve(GJBaseGameLayer* layer) {
     }
 
     // Use the upstream live exporter, including portals, pads, orbs, triggers,
-    // group mappings, rotated hitboxes, and level settings. obbNoLatch=true
-    // restores any collision flags queried while reading rotated hitboxes.
-    solver::buildPois(layer, true);
-    job.csv = solver::g_objRectsText;
-    solver::forgetObjRectsText();
+    // group mappings, rotated hitboxes, and level settings.
+    p1::solver::buildPois(layer, true);
+    job.csv = p1::solver::g_objRectsText;
+    p1::solver::forgetObjRectsText();
     if (job.csv.empty()) {
         job.error = "gdsolver exported an empty level.";
         return job;
@@ -174,8 +178,6 @@ SolveJob prepareSolve(GJBaseGameLayer* layer) {
         return job;
     }
 
-    // dpcore is the same 240 Hz DP used by gdsolver's leveldp and Geode builds.
-    // The world sidecars are those written by solver::buildPois above.
     job.args = {
         "--out", job.planPath,
         "--start", start,
