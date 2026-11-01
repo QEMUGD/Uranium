@@ -290,18 +290,22 @@ public:
         SolveResult result;
         if (!takeSolveResult(result)) return;
 
-        if (result.complete && result.hasPlan) {
+        if (result.complete && result.hasPlan && result.level == levelName(m_layer)) {
             replayInputs = std::move(result.inputs);
             replayStopTick = result.stopTick;
             solved = true;
-            solvedLevel = levelName(m_layer);
+            solvedLevel = result.level;
             if (m_replay) m_replay->setEnabled(true);
             setStatus(result.message);
         } else {
             solved = false;
             replayInputs.clear();
             if (m_replay) m_replay->setEnabled(false);
-            setStatus(result.message.empty() ? "gdsolver did not produce a complete route." : result.message);
+            if (result.complete && result.level != levelName(m_layer)) {
+                setStatus("Solver finished for a different level; solve this level again.");
+            } else {
+                setStatus(result.message.empty() ? "gdsolver did not prove a complete route." : result.message);
+            }
         }
 #endif
     }
