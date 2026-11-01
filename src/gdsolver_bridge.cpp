@@ -39,11 +39,16 @@ inline void writeResult(const std::string& line) {
 namespace uranium::gdsolver {
 namespace {
 
-int groundedState(PlayerObject* player, int) {
-    // The DP anchor takes GD's two contact flags independently. Do not infer
-    // grounded from velocity: pads, ramps and flipped contacts can be settled
-    // with a non-zero or stale velocity value.
-    return player && player->m_isOnGround ? 1 : 0;
+int groundedState(PlayerObject* player, int mode) {
+    if (!player) return 0;
+    // gdsolver's measured anchor rule: ship/UFO/wave keep m_isOnGround sticky
+    // while airborne, so require both contact flags and near-zero vertical speed.
+    const bool flying = mode == 1 || mode == 3 || mode == 4;
+    if (flying) {
+        return (player->m_isOnGround && player->m_isOnGround2 &&
+                std::fabs(static_cast<float>(player->m_yVelocity)) < 0.01f) ? 1 : 0;
+    }
+    return (player->m_isOnGround || static_cast<float>(player->m_yVelocity) == 0.f) ? 1 : 0;
 }
 
 std::string startState(GJBaseGameLayer* layer) {
@@ -59,6 +64,13 @@ std::string startState(GJBaseGameLayer* layer) {
 
     // This matches dp's --start tuple (see dp/src/dp/cli.hpp). The UI opens
     // while paused, so the button is not held at the anchor.
+    float dashSlope = 0.f;
+    if (p1->m_isDashing && p1->m_dashRing) {
+        auto* dashRing = reinterpret_cast<GameObject*>(p1->m_dashRing);
+        dashSlope = std::tan(-static_cast<float>(dashRing->getRotation()) *
+                             3.14159265358979323846f / 180.f);
+    }
+
     std::ostringstream out;
     out << std::setprecision(9)
         << 0 << ','
@@ -74,7 +86,7 @@ std::string startState(GJBaseGameLayer* layer) {
         << (dual ? p2->getPositionY() : 0.f) << ','
         << (dual ? static_cast<float>(p2->m_yVelocity) : 0.f) << ','
         << (dual && p2->m_isUpsideDown ? 1 : 0) << ','
-        << (dual ? groundedState(p2, mode2) : 0) << ','
+        << (dual ? groundedState(p2, mode1) : 0) << ','
         << p1->m_playerSpeed << ','
         << 0 << ','
         << (p1->m_isDashing ? 1 : 0) << ','
