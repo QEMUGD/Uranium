@@ -14,23 +14,35 @@ endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 
-# gdsolver's plain C++17 reachability-DP core. The upstream CLI/test targets
-# stay disabled; Uranium links only the same static core used by leveldp.
-set(GDSOLVER_BUILD_DP OFF CACHE BOOL "" FORCE)
-if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/dp/CMakeLists.txt")
-    message(FATAL_ERROR "gdsolver submodule is missing. Run: git submodule update --init --recursive")
+# gdsolver upstream currently supports the raw Geometry Dash offsets and packed DP
+# state layout on Windows and Android64. Android32 has a different pointer/alignment
+# layout and is intentionally excluded from this in-process solver integration.
+set(URANIUM_GDSOLVER_SUPPORTED TRUE)
+if (ANDROID AND ANDROID_ABI STREQUAL "armeabi-v7a")
+    set(URANIUM_GDSOLVER_SUPPORTED FALSE)
+    message(STATUS "Building Android32 without gdsolver: upstream does not support its offsets/state layout")
 endif()
-add_subdirectory(third_party/gdsolver/dp ${CMAKE_CURRENT_BINARY_DIR}/gdsolver-dp EXCLUDE_FROM_ALL)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
-add_library(${PROJECT_NAME} SHARED ${SOURCES})
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/dp/src
-)
+if (NOT URANIUM_GDSOLVER_SUPPORTED)
+    list(FILTER SOURCES EXCLUDE REGEX "src/gdsolver_bridge\\.cpp$")
+endif()
 
-# Geode's setup_geode_mod() uses the plain target_link_libraries signature,
-# so keep this call plain as well (CMake forbids mixing signatures per target).
-target_link_libraries(${PROJECT_NAME} gdsolver_dpcore)
+add_library(${PROJECT_NAME} SHARED ${SOURCES})
+
+if (URANIUM_GDSOLVER_SUPPORTED)
+    # The CLI/test targets stay disabled; Uranium links the in-process DP core.
+    set(GDSOLVER_BUILD_DP OFF CACHE BOOL "" FORCE)
+    if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/dp/CMakeLists.txt")
+        message(FATAL_ERROR "gdsolver submodule is missing. Run: git submodule update --init --recursive")
+    endif()
+    add_subdirectory(third_party/gdsolver/dp ${CMAKE_CURRENT_BINARY_DIR}/gdsolver-dp EXCLUDE_FROM_ALL)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/dp/src
+    )
+    # Geode's setup_geode_mod() uses the plain target_link_libraries signature.
+    target_link_libraries(${PROJECT_NAME} gdsolver_dpcore)
+endif()
 
 setup_geode_mod(${PROJECT_NAME})
