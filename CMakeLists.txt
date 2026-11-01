@@ -28,6 +28,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/dp/src
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE gdsolver_dpcore)
+
+# Geode's setup_geode_mod() uses the plain target_link_libraries signature,
+# so keep this call plain as well (CMake forbids mixing signatures per target).
+target_link_libraries(${PROJECT_NAME} gdsolver_dpcore)
 
 setup_geode_mod(${PROJECT_NAME})
