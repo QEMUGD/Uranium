@@ -39,14 +39,11 @@ inline void writeResult(const std::string& line) {
 namespace uranium::gdsolver {
 namespace {
 
-int groundedState(PlayerObject* player, int mode) {
-    if (!player) return 0;
-    // GD leaves m_isOnGround set while many flying modes are airborne. For those
-    // modes, require the secondary contact flag and a settled vertical velocity.
-    if (mode == 1 || mode == 3 || mode == 4 || mode == 7) {
-        return player->m_isOnGround2 && std::fabs(static_cast<float>(player->m_yVelocity)) < 0.01f;
-    }
-    return player->m_isOnGround ? 1 : 0;
+int groundedState(PlayerObject* player, int) {
+    // The DP anchor takes GD's two contact flags independently. Do not infer
+    // grounded from velocity: pads, ramps and flipped contacts can be settled
+    // with a non-zero or stale velocity value.
+    return player && player->m_isOnGround ? 1 : 0;
 }
 
 std::string startState(GJBaseGameLayer* layer) {
@@ -214,11 +211,19 @@ SolveResult executeSolve(SolveJob job) {
     if (plan) {
         std::string line;
         while (std::getline(plan, line)) {
+            if (line.size() >= 3 &&
+                static_cast<unsigned char>(line[0]) == 0xEF &&
+                static_cast<unsigned char>(line[1]) == 0xBB &&
+                static_cast<unsigned char>(line[2]) == 0xBF) {
+                line.erase(0, 3);
+            }
             long long tick = 0;
             int buttons = 0;
             if (std::sscanf(line.c_str(), "input=%lld,%d", &tick, &buttons) != 2) continue;
-            if (tick < 0) continue;
-            result.inputs.push_back({tick, static_cast<std::uint8_t>(buttons & 0x3)});
+            if (tick < 0 || (buttons & ~3) != 0) continue;
+            // gdsolver writes a held-button mask, not a list of taps. Replay
+            // consumes these as state changes so releases are never lost.
+            result.inputs.push_back({tick, static_cast<std::uint8_t>(buttons)});
             result.stopTick = std::max(result.stopTick, tick);
         }
     }
@@ -226,8 +231,9 @@ SolveResult executeSolve(SolveJob job) {
     std::stable_sort(result.inputs.begin(), result.inputs.end(),
         [](const InputEvent& a, const InputEvent& b) { return a.tick < b.tick; });
 
-    result.hasPlan = outcome.verdict == dpcore::OutcomeSolved
-                  || outcome.verdict == dpcore::OutcomePartial;
+    // A partial route is useful diagnostic progress but is not safe to offer as
+    // an executable replay. Keep Replay locked unless gdsolver proves a clear.
+    result.hasPlan = outcome.verdict == dpcore::OutcomeSolved;
     if (!result.hasPlan || (rc != 0 && rc != 1)) {
         result.hasPlan = false;
         if (!outcome.unsupported.empty()) {
