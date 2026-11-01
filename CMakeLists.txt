@@ -31,6 +31,7 @@ endif()
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 
 if (URANIUM_GDSOLVER_SUPPORTED)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE URANIUM_HAS_GDSOLVER=1)
     # The CLI/test targets stay disabled; Uranium links the in-process DP core.
     set(GDSOLVER_BUILD_DP OFF CACHE BOOL "" FORCE)
     if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdsolver/dp/CMakeLists.txt")
@@ -43,6 +44,8 @@ if (URANIUM_GDSOLVER_SUPPORTED)
     )
     # Geode's setup_geode_mod() uses the plain target_link_libraries signature.
     target_link_libraries(${PROJECT_NAME} gdsolver_dpcore)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE URANIUM_HAS_GDSOLVER=0)
 endif()
 
 setup_geode_mod(${PROJECT_NAME})
