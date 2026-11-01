@@ -1,0 +1,13 @@
+{
+  "geode": "5.11.2",
+  "gd": {
+    "win": "2.2081",
+    "android": "2.2081"
+  },
+  "id": "uranium.cleanroom",
+  "name": "Uranium",
+  "version": "v0.1.0",
+  "developer": "QEMUGD",
+  "description": "Clean-room Geometry Dash pathfinder prototype with collision-map search and level-entry choices.",
+  "dependencies": {}
+}
