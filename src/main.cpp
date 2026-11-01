@@ -185,7 +185,7 @@ class LevelChoicePopup final : public Popup {
 
     void onReplay(CCObject*) {
 #if URANIUM_HAS_GDSOLVER
-        if (!solved || replayInputs.empty() || solvedLevel != levelName(m_layer)) {
+        if (!solved || solvedLevel != levelName(m_layer)) {
             setStatus("Replay locked: solve this level first.");
             return;
         }
@@ -290,7 +290,7 @@ public:
         SolveResult result;
         if (!takeSolveResult(result)) return;
 
-        if (result.complete && result.hasPlan && !result.inputs.empty()) {
+        if (result.complete && result.hasPlan) {
             replayInputs = std::move(result.inputs);
             replayStopTick = result.stopTick;
             solved = true;
