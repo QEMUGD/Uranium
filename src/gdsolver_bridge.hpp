@@ -26,6 +26,7 @@ struct SolveResult {
     bool complete = false;
     long long stopTick = -1;
     std::string message;
+    std::string level;
     std::vector<InputEvent> inputs;
 };
 
