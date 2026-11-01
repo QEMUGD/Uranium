@@ -267,6 +267,7 @@ class LevelChoicePopup final : public Popup {
         auto win = CCDirector::get()->getWinSize();
         const float fit = std::min((win.width - 24.f) / 400.f, (win.height - 24.f) / 300.f);
         this->setScale(std::clamp(fit, 0.68f, 1.f));
+        this->schedule(schedule_selector(LevelChoicePopup::updatePoll), 0.1f);
         return true;
     }
 
@@ -280,6 +281,8 @@ public:
         CC_SAFE_DELETE(p);
         return nullptr;
     }
+
+    void updatePoll(float) { pollSolver(); }
 
     void pollSolver() {
 #if URANIUM_HAS_GDSOLVER
@@ -344,13 +347,6 @@ class $modify(UraniumPlayLayer, PlayLayer) {
     }
 
     void update(float dt) {
-        if (uranium::solveRunning) {
-            // Polling is done on the main thread; the worker never touches Cocos nodes.
-            if (auto pause = PauseLayer::get()) {
-                (void)pause;
-            }
-        }
-
 #if URANIUM_HAS_GDSOLVER
         if (uranium::replaying && !m_isPaused && !m_hasCompletedLevel && m_player1) {
             const float safeDt = std::clamp(dt, 0.f, 0.5f);
@@ -398,7 +394,9 @@ class $modify(UraniumPlayLayer, PlayLayer) {
 
         if (!m_player1 || m_isPaused || m_hasCompletedLevel) return;
 
+#if URANIUM_HAS_GDSOLVER
         if (uranium::replaying) return;
+#endif
         if (!uranium::autoClick17) return;
 
         uranium::autoClickClock += dt;
